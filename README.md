@@ -22,6 +22,34 @@ This project is intended to run on a Mac with an M-series GPU. Inference is nati
 - A local checkout of `antirez/iris.c`
 - FLUX Klein 9B weights stored outside this repo
 
+## Hardware Recommendations
+
+Iris Studio is built for Apple Silicon and is most comfortable on machines with higher unified memory.
+
+- Minimum usable: M1, M2, M3, or M4 with 16 GB unified memory
+- Recommended: Pro or Max-class chip with 24 GB to 36 GB unified memory
+- Best experience: Max or Ultra-class machine with 48 GB or more unified memory
+
+Practical guidance:
+
+- 16 GB works for basic use, but expect tighter headroom and slower recovery if you keep many other heavy apps open
+- 24 GB to 36 GB is a much better target if you plan to use image editing, multi-reference workflows, queueing, and benchmarking regularly
+- 48 GB or more is the most comfortable option for larger jobs, longer sessions, and keeping the system responsive while generating
+
+## RAM and Storage Expectations
+
+This app relies on Apple unified memory, so the model, generation process, browser, and the rest of macOS all compete for the same pool.
+
+- Absolute floor: 16 GB unified memory
+- Recommended floor: 24 GB unified memory
+- Comfortable for sustained use: 36 GB to 48 GB unified memory
+
+Storage expectations:
+
+- Model weights require significant disk space and should live outside this repo
+- Generated images, thumbnails, uploads, and the SQLite database are stored locally under `storage/`
+- Keep at least 50 GB of free disk space available if you want room for the model, build artifacts, and ongoing image output history
+
 ## 1. Install Apple Tooling
 
 Install Xcode Command Line Tools if you do not already have them:
