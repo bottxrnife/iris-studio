@@ -4,6 +4,17 @@ Iris Studio is a local-first image generation and editing app for Apple Silicon 
 
 This project is intended to run on a Mac with an M-series GPU. Inference is native only. No Docker is used for generation.
 
+## Interface Preview
+
+These previews show the current app layout with placeholder artwork so the README can illustrate the workflow without using local generated outputs.
+
+![Iris Studio text-to-image workspace](docs/readme-assets/overview-text-mode.svg)
+
+<p align="center">
+  <img src="docs/readme-assets/overview-image-mode.svg" alt="Iris Studio image-to-image workspace" width="49%" />
+  <img src="docs/readme-assets/overview-multi-mode.svg" alt="Iris Studio multi-reference workspace" width="49%" />
+</p>
+
 ## What It Does
 
 - Text-to-image, image-to-image, and multi-reference generation

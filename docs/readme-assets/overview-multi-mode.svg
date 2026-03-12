@@ -1,0 +1,172 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="70" x2="1460" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171717"/>
+      <stop offset="1" stop-color="#0C0C0C"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171717"/>
+      <stop offset="1" stop-color="#111111"/>
+    </linearGradient>
+    <linearGradient id="refA" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#6A7CA7"/>
+      <stop offset="1" stop-color="#D7C198"/>
+    </linearGradient>
+    <linearGradient id="refB" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#3E6B5A"/>
+      <stop offset="1" stop-color="#C8E1AF"/>
+    </linearGradient>
+    <linearGradient id="outputGrad" x1="548" y1="174" x2="1054" y2="744" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#546B86"/>
+      <stop offset="0.48" stop-color="#D5B98D"/>
+      <stop offset="1" stop-color="#2A4F4A"/>
+    </linearGradient>
+    <linearGradient id="waterGlow" x1="644" y1="498" x2="924" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9ED4D1" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#9ED4D1" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="82" y="32" width="1436" height="916" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="18"/>
+      <feGaussianBlur stdDeviation="24"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.45 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
+    </filter>
+    <clipPath id="screenClip">
+      <rect x="130" y="80" width="1340" height="820" rx="28"/>
+    </clipPath>
+    <clipPath id="canvasClip">
+      <rect x="548" y="166" width="512" height="580" rx="18"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1600" height="980" fill="#0B0B0B"/>
+  <rect x="70" y="40" width="1460" height="900" rx="36" fill="url(#bg)"/>
+
+  <g filter="url(#shadow)" clip-path="url(#screenClip)">
+    <rect x="130" y="80" width="1340" height="820" rx="28" fill="#101010"/>
+    <rect x="130" y="80" width="320" height="820" fill="url(#panel)"/>
+    <rect x="458" y="80" width="8" height="820" fill="#2F2F2F"/>
+    <rect x="466" y="80" width="676" height="820" fill="#0F0F0F"/>
+    <rect x="1142" y="80" width="8" height="820" fill="#2F2F2F"/>
+    <rect x="1150" y="80" width="320" height="820" fill="url(#panel)"/>
+
+    <text x="160" y="126" fill="#F3F3F3" font-size="22" font-family="Inter, Arial, sans-serif" font-weight="700">Iris Studio</text>
+    <text x="160" y="150" fill="#8E8E8E" font-size="12" font-family="Inter, Arial, sans-serif">Multi-reference composition with reproducible seeds</text>
+
+    <text x="160" y="195" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">MODE</text>
+    <rect x="160" y="210" width="82" height="34" rx="10" fill="#232323"/>
+    <rect x="247" y="210" width="82" height="34" rx="10" fill="#232323"/>
+    <rect x="334" y="210" width="82" height="34" rx="10" fill="#4D79FF"/>
+    <text x="188" y="231" fill="#C9C9C9" font-size="12" font-family="Inter, Arial, sans-serif">Text</text>
+    <text x="274" y="231" fill="#C9C9C9" font-size="12" font-family="Inter, Arial, sans-serif">Image</text>
+    <text x="360" y="231" fill="#FFFFFF" font-size="12" font-family="Inter, Arial, sans-serif" font-weight="600">Multi</text>
+
+    <text x="160" y="284" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">PROMPT</text>
+    <rect x="160" y="298" width="258" height="112" rx="14" fill="#141414" stroke="#2D2D2D"/>
+    <text x="178" y="330" fill="#F0F0F0" font-size="15" font-family="Inter, Arial, sans-serif" font-weight="600">gallery courtyard blending stone,</text>
+    <text x="178" y="354" fill="#F0F0F0" font-size="15" font-family="Inter, Arial, sans-serif" font-weight="600">palms, shallow water, dusk editorial</text>
+    <text x="178" y="378" fill="#F0F0F0" font-size="15" font-family="Inter, Arial, sans-serif" font-weight="600">travel campaign</text>
+
+    <text x="160" y="438" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">REFERENCE IMAGES</text>
+    <rect x="160" y="450" width="258" height="54" rx="14" fill="#1B1B1B" stroke="#2D2D2D"/>
+    <rect x="176" y="459" width="36" height="36" rx="8" fill="url(#refA)"/>
+    <circle cx="194" cy="476" r="7" fill="#E8D8B4"/>
+    <rect x="176" y="482" width="36" height="13" fill="#3C465A" opacity="0.75"/>
+    <text x="224" y="472" fill="#EFEFEF" font-size="12" font-family="Inter, Arial, sans-serif">arcade_ref…</text>
+    <text x="224" y="490" fill="#9A9A9A" font-size="11" font-family="Inter, Arial, sans-serif">1024×768</text>
+
+    <rect x="160" y="512" width="258" height="54" rx="14" fill="#1B1B1B" stroke="#2D2D2D"/>
+    <rect x="176" y="521" width="36" height="36" rx="8" fill="url(#refB)"/>
+    <path d="M182 548C190 528 200 520 212 522V557H182V548Z" fill="#355949"/>
+    <circle cx="197" cy="535" r="7" fill="#CDE2B0"/>
+    <text x="224" y="534" fill="#EFEFEF" font-size="12" font-family="Inter, Arial, sans-serif">garden_ref…</text>
+    <text x="224" y="552" fill="#9A9A9A" font-size="11" font-family="Inter, Arial, sans-serif">1280×960</text>
+
+    <text x="160" y="612" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">OUTPUT SCALE</text>
+    <rect x="160" y="628" width="188" height="8" rx="4" fill="#2A2A2A"/>
+    <rect x="160" y="628" width="188" height="8" rx="4" fill="#4D79FF"/>
+    <circle cx="348" cy="632" r="10" fill="#E6EFFF"/>
+    <text x="368" y="638" fill="#EDEDED" font-size="15" font-family="JetBrains Mono, monospace">100%</text>
+    <text x="160" y="664" fill="#9A9A9A" font-size="12" font-family="Inter, Arial, sans-serif">Output: 1024 × 768</text>
+
+    <text x="160" y="712" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">SEED</text>
+    <rect x="160" y="726" width="258" height="40" rx="12" fill="#141414" stroke="#2D2D2D"/>
+    <text x="178" y="751" fill="#F0F0F0" font-size="14" font-family="JetBrains Mono, monospace">11804577</text>
+
+    <rect x="160" y="819" width="258" height="52" rx="14" fill="#4D79FF"/>
+    <text x="236" y="851" fill="#FFFFFF" font-size="15" font-family="Inter, Arial, sans-serif" font-weight="700">Generate</text>
+    <text x="332" y="851" fill="#D7E2FF" font-size="12" font-family="Inter, Arial, sans-serif">⌘↵</text>
+
+    <rect x="466" y="80" width="676" height="46" fill="#101010"/>
+    <rect x="466" y="126" width="676" height="1" fill="#262626"/>
+    <circle cx="488" cy="103" r="5" fill="#39D07E"/>
+    <text x="504" y="108" fill="#BDBDBD" font-size="12" font-family="Inter, Arial, sans-serif">Done</text>
+    <text x="890" y="108" fill="#BDBDBD" font-size="12" font-family="JetBrains Mono, monospace">Seed: 11804577</text>
+    <text x="1050" y="108" fill="#BDBDBD" font-size="12" font-family="Inter, Arial, sans-serif">24.9s</text>
+
+    <rect x="536" y="146" width="536" height="620" rx="28" fill="#141414" stroke="#2B2B2B"/>
+    <g clip-path="url(#canvasClip)">
+      <g transform="translate(-116 0)">
+        <rect x="664" y="166" width="512" height="580" fill="url(#outputGrad)"/>
+        <rect x="664" y="632" width="512" height="114" fill="#16302F" opacity="0.18"/>
+        <path d="M664 472C744 404 838 362 946 348C1038 336 1114 348 1176 378V166H664V472Z" fill="#5C7892" opacity="0.45"/>
+        <path d="M664 510C730 442 810 404 902 394C1006 382 1096 402 1176 458V746H664V510Z" fill="#D3BC90" opacity="0.34"/>
+        <path d="M732 672C760 574 814 498 896 448C960 410 1018 406 1070 438C1112 466 1142 526 1160 620C1104 604 1050 606 1000 628C946 650 892 682 832 704L732 672Z" fill="#2D5A52"/>
+        <path d="M792 602C824 542 862 500 910 472C956 446 998 444 1036 466C998 502 970 546 950 598C918 612 866 616 792 602Z" fill="#E3D6BD"/>
+        <path d="M700 636H1140V706H700V636Z" fill="url(#waterGlow)" opacity="0.72"/>
+        <path d="M812 362C846 290 904 250 986 242C1036 258 1082 304 1120 380C1088 366 1058 364 1030 378C1000 334 958 312 904 312C872 312 842 328 812 362Z" fill="#314B44"/>
+        <path d="M850 222C898 250 930 284 946 326" stroke="#E6DDB5" stroke-width="8" stroke-linecap="round"/>
+        <path d="M1018 222C970 252 938 288 924 332" stroke="#E6DDB5" stroke-width="8" stroke-linecap="round"/>
+        <path d="M742 520C768 470 800 446 838 448C816 482 808 516 814 550C778 548 754 538 742 520Z" fill="#416A58"/>
+        <path d="M1112 520C1086 470 1054 446 1016 448C1038 482 1046 516 1040 550C1076 548 1100 538 1112 520Z" fill="#416A58"/>
+      </g>
+    </g>
+
+    <rect x="466" y="840" width="676" height="60" fill="#101010"/>
+    <rect x="466" y="839" width="676" height="1" fill="#262626"/>
+    <text x="496" y="876" fill="#BEBEBE" font-size="14" font-family="Inter, Arial, sans-serif">gallery courtyard blending stone, palms, shallow water, dusk editorial travel campaign</text>
+
+    <text x="1178" y="122" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">DETAILS</text>
+    <text x="1178" y="160" fill="#939393" font-size="12" font-family="Inter, Arial, sans-serif">Status</text>
+    <text x="1398" y="160" fill="#57D68D" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="end">done</text>
+    <text x="1178" y="188" fill="#939393" font-size="12" font-family="Inter, Arial, sans-serif">Size</text>
+    <text x="1398" y="188" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="end">1024 × 768</text>
+    <text x="1178" y="216" fill="#939393" font-size="12" font-family="Inter, Arial, sans-serif">Seed</text>
+    <text x="1398" y="216" fill="#EDEDED" font-size="12" font-family="JetBrains Mono, monospace" text-anchor="end">11804577</text>
+    <text x="1178" y="244" fill="#939393" font-size="12" font-family="Inter, Arial, sans-serif">Model</text>
+    <text x="1398" y="244" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="end">flux-klein-9b</text>
+    <text x="1178" y="272" fill="#939393" font-size="12" font-family="Inter, Arial, sans-serif">Mode</text>
+    <text x="1398" y="272" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="end">multi-ref</text>
+
+    <rect x="1178" y="298" width="78" height="34" rx="10" fill="#232323"/>
+    <rect x="1264" y="298" width="96" height="34" rx="10" fill="#232323"/>
+    <rect x="1368" y="298" width="32" height="34" rx="10" fill="#232323"/>
+    <text x="1205" y="320" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif">1024</text>
+    <text x="1293" y="320" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif">To Editor</text>
+    <text x="1384" y="320" fill="#EDEDED" font-size="16" font-family="Inter, Arial, sans-serif">↓</text>
+
+    <rect x="1150" y="356" width="320" height="1" fill="#262626"/>
+    <text x="1178" y="386" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">HISTORY</text>
+
+    <rect x="1178" y="408" width="264" height="72" rx="14" fill="#212121"/>
+    <rect x="1190" y="420" width="48" height="48" rx="10" fill="url(#refA)"/>
+    <text x="1250" y="434" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif">gallery courtyard blending stone</text>
+    <text x="1250" y="452" fill="#989898" font-size="11" font-family="Inter, Arial, sans-serif">multi-ref · 1024×768</text>
+    <text x="1388" y="452" fill="#989898" font-size="11" font-family="Inter, Arial, sans-serif" text-anchor="end">24.9s</text>
+
+    <rect x="1178" y="492" width="264" height="72" rx="14" fill="#171717"/>
+    <rect x="1190" y="504" width="48" height="48" rx="10" fill="#597A65"/>
+    <text x="1250" y="518" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif">botanical reading nook, lacquered</text>
+    <text x="1250" y="536" fill="#989898" font-size="11" font-family="Inter, Arial, sans-serif">img2img · 896×672</text>
+    <text x="1388" y="536" fill="#989898" font-size="11" font-family="Inter, Arial, sans-serif" text-anchor="end">21.4s</text>
+
+    <rect x="1178" y="576" width="264" height="72" rx="14" fill="#171717"/>
+    <rect x="1190" y="588" width="48" height="48" rx="10" fill="#7D8EA9"/>
+    <text x="1250" y="602" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif">editorial portrait, soft diffused</text>
+    <text x="1250" y="620" fill="#989898" font-size="11" font-family="Inter, Arial, sans-serif">768×1024</text>
+    <text x="1388" y="620" fill="#989898" font-size="11" font-family="Inter, Arial, sans-serif" text-anchor="end">17.8s</text>
+  </g>
+</svg>
