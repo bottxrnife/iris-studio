@@ -27,6 +27,18 @@ function getApiBase() {
   return explicitOrigin ? `${explicitOrigin}/api` : '/api';
 }
 
+function getDirectApiBase() {
+  const explicitOrigin = process.env.NEXT_PUBLIC_API_ORIGIN;
+  if (explicitOrigin) {
+    return `${explicitOrigin}/api`;
+  }
+  if (typeof window !== 'undefined') {
+    // Bypass Next.js proxy for large file uploads to prevent connection drops
+    return `${window.location.protocol}//${window.location.hostname}:8787/api`;
+  }
+  return `${DEFAULT_SERVER_API_ORIGIN}/api`;
+}
+
 async function handleJsonError(res: Response, fallbackMessage: string) {
   const err = await res.json().catch(() => ({ error: fallbackMessage }));
   throw new Error(err.error ?? `HTTP ${res.status}`);
@@ -122,7 +134,7 @@ export async function uploadLoras(files: File[]): Promise<LoraInfo[]> {
   }
 
   try {
-    const res = await fetch(`${getApiBase()}/loras/upload`, {
+    const res = await fetch(`${getDirectApiBase()}/loras/upload`, {
       method: 'POST',
       body: formData,
     });
