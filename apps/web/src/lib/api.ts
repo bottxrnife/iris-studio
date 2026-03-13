@@ -122,8 +122,8 @@ export async function uploadLoras(files: File[]): Promise<LoraInfo[]> {
   }
 
   try {
-    const directBase = `${DEFAULT_SERVER_API_ORIGIN}/api`;
-    const res = await fetch(`${directBase}/loras/upload`, {
+    const directBase = process.env.NEXT_PUBLIC_API_ORIGIN ?? DEFAULT_SERVER_API_ORIGIN;
+    const res = await fetch(`${directBase}/api/loras/upload`, {
       method: 'POST',
       body: formData,
     });
