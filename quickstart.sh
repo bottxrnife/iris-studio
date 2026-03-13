@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="Iris Studio"
 DEFAULT_IRIS_DIR="${ROOT_DIR}/vendor/iris.c"
 DEFAULT_MODELS_DIR="${ROOT_DIR}/Models"
