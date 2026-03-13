@@ -276,15 +276,9 @@ main() {
   printf '  IRIS_BIN=%s\n' "$iris_dir/iris"
   printf '  IRIS_MODEL_DIR=%s\n' "$model_dir"
 
-  if prompt_yes_no "Start Iris Studio now with npm run dev?" "y"; then
-    log "Starting the app. Web UI: http://localhost:3000  API: http://127.0.0.1:8787"
-    cd "$ROOT_DIR"
-    npm run dev
-  else
-    printf '\nRun these commands when you are ready:\n'
-    printf '  cd %s\n' "$ROOT_DIR"
-    printf '  npm run dev\n'
-  fi
+  log "Starting the app... Web UI: http://localhost:3000  API: http://127.0.0.1:8787"
+  cd "$ROOT_DIR"
+  npm run dev
 }
 
 main "$@"
