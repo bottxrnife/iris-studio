@@ -37,9 +37,9 @@ const PHASE_ORDER = [
 function getPhaseIndex(phase: string): number {
   const lower = phase.toLowerCase();
   if (lower.includes('vae')) return 1;
-  if (lower.includes('text') && (lower.includes('load') || lower.includes('encoder'))) return 2;
+  if (lower.includes('text') || lower.includes('qwen') || lower.includes('encoder')) return 2;
   if (lower.includes('encod')) return 3;
-  if (lower.includes('transformer')) return 4;
+  if (lower.includes('transformer') || lower.includes('flux.2')) return 4;
   if (lower.includes('denois')) return 5;
   if (lower.includes('decod')) return 6;
   if (lower.includes('sav')) return 7;

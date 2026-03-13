@@ -108,7 +108,7 @@ export function parseProgressLine(
 
   const now = Date.now();
 
-  const phaseStartMatch = line.match(/^([A-Z][a-z ]+)\.\.\.$/);
+  const phaseStartMatch = line.match(/^([A-Za-z0-9\. \[\]\-]+)\.\.\.$/);
   if (phaseStartMatch) {
     const phase = phaseStartMatch[1].trim();
     const nextState = {
@@ -129,7 +129,7 @@ export function parseProgressLine(
     return nextState;
   }
 
-  const phaseDoneMatch = line.match(/^([A-Z][a-z ]+)\.\.\.?\s+done\s+\((\d+(?:\.\d+)?)s\)/);
+  const phaseDoneMatch = line.match(/^([A-Za-z0-9\. \[\]\-]+)\.\.\.?\s+done\s+\((\d+(?:\.\d+)?)s\)/);
   if (phaseDoneMatch) {
     const phase = phaseDoneMatch[1].trim();
     const elapsedSec = parseFloat(phaseDoneMatch[2]);
