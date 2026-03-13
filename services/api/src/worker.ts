@@ -6,6 +6,8 @@ import sharp from 'sharp';
 import { config } from './config.js';
 import { queries, type JobRow } from './db.js';
 import { consumeProgressBuffer, createInitialProgressState, parseProgressLine, stripAnsi, type ProgressData } from './iris-progress.js';
+import { getInstalledModelPath } from './models.js';
+import { getLoraById } from './loras.js';
 
 export type JobPhase = 'queued' | 'running' | 'saving' | 'done' | 'failed' | 'cancelled';
 export type JobEventType = JobPhase | 'progress';
@@ -162,7 +164,24 @@ async function runJob(jobId: string) {
 
   fs.mkdirSync(config.outputDir, { recursive: true });
 
-  const args = buildIrisArgs(row, outputPath);
+  let args: string[];
+  try {
+    args = buildIrisArgs(row, outputPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not prepare iris arguments';
+    queries.updateJobResult.run(
+      'failed',
+      row.seed,
+      null,
+      null,
+      null,
+      message,
+      null,
+      jobId
+    );
+    emit(jobId, 'failed', { error: message });
+    return;
+  }
   console.log(`[worker] running: ${config.irisBin} ${args.join(' ')}`);
 
   const startTime = Date.now();
@@ -234,8 +253,13 @@ async function runJob(jobId: string) {
 }
 
 function buildIrisArgs(row: JobRow, outputPath: string): string[] {
+  const modelPath = getInstalledModelPath(row.model);
+  if (!modelPath) {
+    throw new Error(`Model is not installed: ${row.model}`);
+  }
+
   const args: string[] = [
-    '-d', config.irisModelDir,
+    '-d', modelPath,
     '-p', row.prompt,
     '-W', String(row.width),
     '-H', String(row.height),
@@ -253,6 +277,16 @@ function buildIrisArgs(row: JobRow, outputPath: string): string[] {
 
   if (row.guidance != null) {
     args.push('-g', String(row.guidance));
+  }
+
+  if (row.lora_id) {
+    const lora = getLoraById(row.lora_id);
+    if (!lora) {
+      throw new Error(`LoRA is no longer available: ${row.lora_id}`);
+    }
+
+    args.push('--lora', lora.localPath);
+    args.push('--lora-scale', String(row.lora_scale ?? 1));
   }
 
   const inputPaths = row.input_paths ? JSON.parse(row.input_paths) as string[] : [];
@@ -390,6 +424,8 @@ function parseMetadataFromStderr(stderr: string): Record<string, string> | null 
     { key: 'steps', regex: /Steps:\s*(\d+)/i },
     { key: 'guidance', regex: /Guidance:\s*([\d.]+)/i },
     { key: 'model', regex: /Model:\s*(.+)/i },
+    { key: 'lora', regex: /LoRA:\s*(.+)/i },
+    { key: 'lora_scale', regex: /LoRA scale:\s*([\d.]+)/i },
     { key: 'scheduler', regex: /Scheduler:\s*(.+)/i },
     { key: 'total_time', regex: /Total time:\s*(.+)/i },
     { key: 'generation_time', regex: /Generation time:\s*(.+)/i },

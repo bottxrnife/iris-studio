@@ -1,27 +1,25 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, useCallback, useRef, useMemo, useEffect, useDeferredValue, type ChangeEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Sparkles, Image, Images, ChevronDown, ChevronUp, Upload, X, Shuffle, Gauge } from 'lucide-react';
+import { Sparkles, Image, Images, ChevronDown, ChevronUp, Upload, X, Shuffle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
-import { createJob, estimateJob, getBenchmarkStatus, startBenchmark, stopBenchmark, uploadFiles, getUploadUrl } from '@/lib/api';
+import { createJob, estimateJob, getBenchmarkStatus, getLoras, getModels, uploadFiles, getUploadUrl } from '@/lib/api';
 import { formatRemainingTime } from '@/lib/format';
-import { SIZE_PRESETS, PROMPT_EXAMPLES, type BenchmarkRun, type EditorDraft, type Job, type JobMode, type CreateJobRequest, type EstimateJobResponse } from '@/lib/types';
+import { generateRandomPrompt } from '@/lib/prompt-generator';
+import { SIZE_PRESETS, type EditorDraft, type Job, type JobMode, type CreateJobRequest, type EstimateJobResponse, type ModelId } from '@/lib/types';
 
 const MIN_DIMENSION = 64;
 const MAX_DIMENSION = 1792;
 const DIMENSION_STEP = 16;
 const DIMENSION_NORMALIZE_DELAY_MS = 450;
 const MAX_BATCH_PROMPTS = 200;
-const CURRENT_BENCHMARK_LABELS = ['512 x 512', '768 x 768', '1024 x 1024'] as const;
-const CURRENT_BENCHMARK_LABEL_SET = new Set<string>(CURRENT_BENCHMARK_LABELS);
-const CURRENT_BENCHMARK_LABEL_ORDER = new Map<string, number>(CURRENT_BENCHMARK_LABELS.map((label, index) => [label, index]));
 const IRIS_REFERENCE_TEXT_SEQ = 512;
 const FLUX_9B_REFERENCE_HEADS = 32;
 const IRIS_REFERENCE_ATTENTION_MAX_BYTES = 4 * 1024 * 1024 * 1024;
@@ -116,27 +114,57 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
   const queryClient = useQueryClient();
   const lastEstimateRef = useRef<EstimateJobResponse | null>(null);
 
-  const [mode, setMode] = useState<JobMode>('txt2img');
+  const [mode, setMode] = useState<JobMode>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iris-selected-mode');
+      if (stored === 'txt2img' || stored === 'img2img' || stored === 'multi-ref') {
+        return stored;
+      }
+    }
+    return 'txt2img';
+  });
   const [prompt, setPrompt] = useState('');
+  const [selectedModel, setSelectedModel] = useState<ModelId>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('iris-selected-model');
+      if (stored === 'flux-klein-4b' || stored === 'flux-klein-base-4b' || stored === 'flux-klein-9b' || stored === 'flux-klein-base-9b') {
+        return stored;
+      }
+    }
+    return 'flux-klein-9b';
+  });
+  const [selectedLoraId, setSelectedLoraId] = useState<string | null>(null);
+  const [loraScale, setLoraScale] = useState(1);
   const [sizePreset, setSizePreset] = useState('Custom');
   const [customWidth, setCustomWidth] = useState('512');
   const [customHeight, setCustomHeight] = useState('512');
   const [seed, setSeed] = useState('');
-  const [queueCount, setQueueCount] = useState('1');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [steps, setSteps] = useState('');
   const [guidance, setGuidance] = useState('');
+  const [iterations, setIterations] = useState('1');
+  const [seedMode, setSeedMode] = useState<'same' | 'random'>('same');
   const [refImages, setRefImages] = useState<RefImageInfo[]>([]);
   const [scalePercent, setScalePercent] = useState(100);
   const [batchPrompts, setBatchPrompts] = useState<string[]>([]);
   const [batchPromptFileName, setBatchPromptFileName] = useState('');
   const [batchPromptError, setBatchPromptError] = useState<string | null>(null);
-  const [showBenchmarkPanel, setShowBenchmarkPanel] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const batchPromptFileInputRef = useRef<HTMLInputElement>(null);
-  const benchmarkButtonRef = useRef<HTMLButtonElement>(null);
-  const benchmarkPanelRef = useRef<HTMLDivElement>(null);
   const referenceCount = mode === 'txt2img' ? 0 : Math.max(1, refImages.length);
+
+  const modelsQuery = useQuery({
+    queryKey: ['models'],
+    queryFn: getModels,
+    refetchInterval: (query) => query.state.data?.activeDownloadModelId ? 1500 : 5000,
+    staleTime: 1000,
+  });
+  const lorasQuery = useQuery({
+    queryKey: ['loras'],
+    queryFn: getLoras,
+    staleTime: 1500,
+  });
 
   const handleModeChange = useCallback((nextMode: JobMode) => {
     setMode(nextMode);
@@ -170,6 +198,27 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
       height: roundTo16(fittedPrimaryRefSize.height * factor),
     };
   }, [fittedPrimaryRefSize, scalePercent]);
+
+  const availableModels = useMemo(
+    () => (modelsQuery.data?.models ?? []).filter((model) => model.installed),
+    [modelsQuery.data?.models]
+  );
+  const hasInstalledModel = availableModels.length > 0;
+  const selectedModelInfo = modelsQuery.data?.models.find((model) => model.id === selectedModel) ?? null;
+  const compatibleLoras = useMemo(
+    () => (lorasQuery.data?.loras ?? []).filter((lora) => lora.compatibleModelIds.includes(selectedModel)),
+    [lorasQuery.data?.loras, selectedModel]
+  );
+  const selectableLoras = useMemo(
+    () => compatibleLoras.filter((lora) => lora.runtimeReady),
+    [compatibleLoras]
+  );
+  const selectedLora = useMemo(
+    () => (selectedLoraId
+      ? lorasQuery.data?.loras.find((lora) => lora.id === selectedLoraId) ?? null
+      : null),
+    [lorasQuery.data?.loras, selectedLoraId]
+  );
 
   useEffect(() => {
     if (!/^\d+$/.test(customWidth)) {
@@ -209,6 +258,38 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     };
   }, [customHeight]);
 
+  useEffect(() => {
+    localStorage.setItem('iris-selected-model', selectedModel);
+  }, [selectedModel]);
+
+  useEffect(() => {
+    localStorage.setItem('iris-selected-mode', mode);
+  }, [mode]);
+
+  useEffect(() => {
+    if (!hasInstalledModel) {
+      return;
+    }
+
+    if (availableModels.some((model) => model.id === selectedModel)) {
+      return;
+    }
+
+    setSelectedModel(availableModels[0]!.id);
+  }, [availableModels, hasInstalledModel, selectedModel]);
+
+  useEffect(() => {
+    if (!selectedLoraId || !lorasQuery.data) {
+      return;
+    }
+
+    const lora = lorasQuery.data.loras.find((entry) => entry.id === selectedLoraId);
+    if (!lora || !lora.compatibleModelIds.includes(selectedModel) || !lora.runtimeReady) {
+      setSelectedLoraId(null);
+      setLoraScale(1);
+    }
+  }, [lorasQuery.data, selectedLoraId, selectedModel]);
+
   const uploadMutation = useMutation({
     mutationFn: (files: File[]) => uploadFiles(files),
   });
@@ -220,28 +301,15 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     staleTime: 1000,
   });
 
-  const benchmarkMutation = useMutation({
-    mutationFn: startBenchmark,
-    onSuccess: () => {
-      setShowBenchmarkPanel(true);
-      queryClient.invalidateQueries({ queryKey: ['benchmark-status'] });
-    },
-  });
-
-  const stopBenchmarkMutation = useMutation({
-    mutationFn: stopBenchmark,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['benchmark-status'] });
-    },
-  });
-
   const createMutation = useMutation({
     mutationFn: async (requests: CreateJobRequest[]) => {
       const createdJobs: Job[] = [];
 
       for (let index = 0; index < requests.length; index += 1) {
         const request = requests[index]!;
-        const nextSeed = request.seed != null ? request.seed + index : undefined;
+        const nextSeed = seedMode === 'same'
+          ? request.seed
+          : (request.seed != null ? request.seed + index : undefined);
 
         try {
           const job = await createJob({
@@ -291,6 +359,7 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
 
     const baseRequest: CreateJobRequest = {
       mode,
+      model: selectedModel,
       prompt: promptList[0]!,
       width,
       height,
@@ -303,6 +372,10 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     if (Number.isFinite(parsedSeed)) baseRequest.seed = parsedSeed;
     if (showAdvanced && Number.isFinite(parsedSteps) && parsedSteps > 0) baseRequest.steps = parsedSteps;
     if (showAdvanced && Number.isFinite(parsedGuidance) && parsedGuidance >= 0) baseRequest.guidance = parsedGuidance;
+    if (selectedLoraId) {
+      baseRequest.loraId = selectedLoraId;
+      baseRequest.loraScale = loraScale;
+    }
     if (mode === 'img2img' && refImages.length > 0) {
       baseRequest.inputPaths = [refImages[0].filename];
     }
@@ -312,14 +385,14 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
 
     const quantity = batchPrompts.length > 0
       ? 1
-      : Math.max(1, Math.min(12, parseInt(queueCount, 10) || 1));
+      : Math.max(1, parseInt(iterations, 10) || 1);
     const requests = promptList.flatMap((batchPrompt) => Array.from({ length: quantity }, () => ({
       ...baseRequest,
       prompt: batchPrompt,
     })));
 
     createMutation.mutate(requests);
-  }, [batchPrompts, prompt, mode, customWidth, customHeight, scaledSize, seed, queueCount, showAdvanced, steps, guidance, refImages, createMutation]);
+  }, [batchPrompts, prompt, mode, selectedModel, selectedLoraId, loraScale, customWidth, customHeight, scaledSize, seed, iterations, showAdvanced, steps, guidance, refImages, createMutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -411,11 +484,15 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
 
     setMode(draft.mode);
     setPrompt(draft.prompt);
+    setSelectedModel(draft.model);
+    setSelectedLoraId(draft.loraId);
+    setLoraScale(draft.loraScale ?? 1);
     setSizePreset(matchingPreset?.label ?? 'Custom');
     setCustomWidth(String(draft.width));
     setCustomHeight(String(draft.height));
     setSeed(draft.seed != null ? String(draft.seed) : '');
-    setQueueCount('1');
+    setIterations('1');
+    setSeedMode('same');
     setSteps(draft.steps != null ? String(draft.steps) : '');
     setGuidance(draft.guidance != null ? String(draft.guidance) : '');
     setShowAdvanced(draft.steps != null || draft.guidance != null);
@@ -465,6 +542,20 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     };
   }, [draft, readUploadedImageDimensions]);
 
+  useEffect(() => {
+    if (!selectedModelInfo) {
+      return;
+    }
+
+    if (!steps) {
+      setSteps(String(selectedModelInfo.recommendedSteps));
+    }
+
+    if (selectedModelInfo.recommendedGuidance != null && !guidance) {
+      setGuidance(String(selectedModelInfo.recommendedGuidance));
+    }
+  }, [guidance, selectedModelInfo, steps]);
+
   const handleFileUpload = useCallback(
     async (e: ChangeEvent<HTMLInputElement>) => {
       const fileList = Array.from(e.target.files ?? []);
@@ -498,9 +589,8 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
   }, []);
 
   const randomExample = useCallback(() => {
-    const example = PROMPT_EXAMPLES[Math.floor(Math.random() * PROMPT_EXAMPLES.length)];
-    setPrompt(example);
-  }, []);
+    setPrompt(generateRandomPrompt(mode));
+  }, [mode]);
 
   const hasRequiredReferences =
     mode === 'txt2img' ||
@@ -508,12 +598,12 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     (mode === 'multi-ref' && refImages.length >= 2);
   const hasPromptInput = batchPrompts.length > 0 || !!prompt.trim();
   const isBenchmarkActive = benchmarkQuery.data?.currentRun?.status === 'running';
-  const isBenchmarkPending = isBenchmarkActive || benchmarkMutation.isPending;
   const isLoading = createMutation.isPending || uploadMutation.isPending;
-  const canGenerate = hasPromptInput && hasRequiredReferences;
+  const hasSelectedLora = !!selectedLora;
+  const canGenerate = hasPromptInput && hasRequiredReferences && hasInstalledModel;
   const queueTotal = batchPrompts.length > 0
     ? batchPrompts.length
-    : Math.max(1, Math.min(12, parseInt(queueCount, 10) || 1));
+    : Math.max(1, parseInt(iterations, 10) || 1);
   const baseSeed = seed ? parseInt(seed, 10) : null;
   const resolvedSize = useMemo(() => {
     if (mode === 'txt2img') {
@@ -531,6 +621,7 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
   }, [customHeight, customWidth, mode, scaledSize]);
   const estimateInputCount = mode === 'txt2img' ? 0 : refImages.length;
   const canEstimate =
+    hasInstalledModel &&
     resolvedSize != null &&
     (mode === 'txt2img' ||
       (mode === 'img2img' && refImages.length >= 1) ||
@@ -545,6 +636,7 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
 
     return {
       mode,
+      model: selectedModel,
       width: resolvedSize.width,
       height: resolvedSize.height,
       inputCount: estimateInputCount,
@@ -552,7 +644,7 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
       ...(showAdvanced && Number.isFinite(parsedSteps) && parsedSteps > 0 ? { steps: parsedSteps } : {}),
       ...(showAdvanced && Number.isFinite(parsedGuidance) && parsedGuidance >= 0 ? { guidance: parsedGuidance } : {}),
     };
-  }, [canEstimate, estimateInputCount, mode, queueTotal, resolvedSize, showAdvanced, steps, guidance]);
+  }, [canEstimate, estimateInputCount, mode, selectedModel, queueTotal, resolvedSize, showAdvanced, steps, guidance]);
   const deferredEstimateRequest = useDeferredValue(estimateRequest);
   const estimateQuery = useQuery({
     queryKey: ['job-estimate', deferredEstimateRequest],
@@ -574,39 +666,6 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     }
   }, [canEstimate]);
 
-  useEffect(() => {
-    if (!showBenchmarkPanel) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (!target) {
-        return;
-      }
-
-      if (benchmarkPanelRef.current?.contains(target) || benchmarkButtonRef.current?.contains(target)) {
-        return;
-      }
-
-      setShowBenchmarkPanel(false);
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setShowBenchmarkPanel(false);
-      }
-    };
-
-    window.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [showBenchmarkPanel]);
-
   const estimateData = estimateQuery.data ?? lastEstimateRef.current;
   const estimatedGeneration = formatRemainingTime(estimateData?.estimatedGenerationMs ?? null);
   const estimatedTotal = formatRemainingTime(estimateData?.estimatedTotalMs ?? null);
@@ -617,226 +676,142 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     !estimateQuery.isError &&
     estimateData?.estimatedGenerationMs == null;
   const showEstimateMessage = estimateUnavailable || (estimateQuery.isError && !estimateData);
-  const latestBenchmarkRun = benchmarkQuery.data?.latestRun ?? null;
-  const latestUsableBenchmarkRun = benchmarkQuery.data?.latestUsableRun ?? null;
-  const currentBenchmarkRun = benchmarkQuery.data?.currentRun ?? null;
-  const currentBenchmarkProgress = currentBenchmarkRun?.currentProgress ?? null;
-  const isBenchmarkStopping = stopBenchmarkMutation.isPending;
-  const latestTxtBenchmarkSamples = useMemo(
-    () => getCurrentBenchmarkSamples(latestUsableBenchmarkRun, 'txt2img'),
-    [latestUsableBenchmarkRun]
-  );
-  const latestImgBenchmarkSamples = useMemo(
-    () => getCurrentBenchmarkSamples(latestUsableBenchmarkRun, 'img2img'),
-    [latestUsableBenchmarkRun]
-  );
-  const benchmarkButtonLabel = currentBenchmarkRun?.status === 'running'
-    ? `${currentBenchmarkRun.completedCases}/${currentBenchmarkRun.totalCases}`
-    : 'Benchmark';
-  const benchmarkOverallPercent = currentBenchmarkRun
-    ? Math.min(
-        100,
-        Math.round(
-          ((currentBenchmarkRun.completedCases + (currentBenchmarkProgress?.percent ?? 0) / 100) / currentBenchmarkRun.totalCases) * 100
-        )
-      )
-    : 0;
-  const benchmarkCurrentPercent = currentBenchmarkProgress?.percent ?? null;
-  const showLatestBenchmarkSamples =
-    !!latestUsableBenchmarkRun &&
-    latestUsableBenchmarkRun.samples.length > 0 &&
-    latestUsableBenchmarkRun.status !== 'failed';
-  const benchmarkReportRun = latestBenchmarkRun?.status === 'cancelled'
-    ? latestBenchmarkRun
-    : latestUsableBenchmarkRun;
   const buttonLabel = createMutation.isPending
-    ? (queueTotal === 1 ? 'Adding to queue...' : `Queueing ${queueTotal} jobs...`)
+    ? (queueTotal === 1 ? 'Generating...' : `Queueing ${queueTotal} images...`)
     : batchPrompts.length > 0
-      ? `Queue ${queueTotal} prompts`
-      : (queueTotal === 1 ? 'Generate' : `Queue ${queueTotal} jobs`);
+      ? `Generate ${queueTotal} prompts`
+      : (queueTotal === 1 ? 'Generate' : `Generate ${queueTotal} images`);
 
   return (
-    <div className="relative w-full border-r border-border bg-card flex flex-col h-full min-h-0">
-      <div className="p-4 border-b border-border shrink-0">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">Iris Studio</h1>
-            <p className="text-xs text-muted-foreground mt-1">flux-klein-9b</p>
+    <div className="w-full border-r border-border bg-card flex flex-col h-full min-h-0">
+      {/* Mode selector - fixed outside scroll area */}
+      <div className="shrink-0 border-b border-border bg-card px-4 py-3">
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground uppercase tracking-wider">Mode</Label>
+          <div className="grid grid-cols-3 gap-1">
+            <Button
+              variant={mode === 'txt2img' ? 'default' : 'secondary'}
+              size="sm"
+              className="text-xs"
+              onClick={() => handleModeChange('txt2img')}
+            >
+              <Sparkles className="h-3 w-3 mr-1" />
+              Text
+            </Button>
+            <Button
+              variant={mode === 'img2img' ? 'default' : 'secondary'}
+              size="sm"
+              className="text-xs"
+              onClick={() => handleModeChange('img2img')}
+            >
+              <Image className="h-3 w-3 mr-1" />
+              Image
+            </Button>
+            <Button
+              variant={mode === 'multi-ref' ? 'default' : 'secondary'}
+              size="sm"
+              className="text-xs"
+              onClick={() => handleModeChange('multi-ref')}
+            >
+              <Images className="h-3 w-3 mr-1" />
+              Multi
+            </Button>
           </div>
-          <Button
-            ref={benchmarkButtonRef}
-            type="button"
-            variant={showBenchmarkPanel || isBenchmarkActive ? 'default' : 'secondary'}
-            size="sm"
-            className="h-8 shrink-0 gap-1.5 px-3 text-xs"
-            onClick={() => setShowBenchmarkPanel((current) => !current)}
-          >
-            <Gauge className="h-3.5 w-3.5" />
-            {benchmarkButtonLabel}
-          </Button>
         </div>
       </div>
 
-      {showBenchmarkPanel && (
-        <div className="absolute left-3 right-3 top-[4.75rem] z-30">
-          <div
-            ref={benchmarkPanelRef}
-            className="max-h-[min(72vh,760px)] overflow-y-auto rounded-xl border border-border bg-card/95 p-4 shadow-2xl backdrop-blur"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Gauge className="h-4 w-4 text-primary" />
-                  <h2 className="text-sm font-semibold text-foreground">System Benchmark</h2>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Runs a short local benchmark for text-to-image and image-to-image. The measured times also calibrate ETA prediction.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                onClick={() => setShowBenchmarkPanel(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <div className="mt-4 space-y-4">
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="flex-1 text-xs"
-                  onClick={() => benchmarkMutation.mutate()}
-                  disabled={isBenchmarkPending}
-                >
-                  {currentBenchmarkRun?.status === 'running'
-                    ? `Benchmarking ${currentBenchmarkRun.completedCases}/${currentBenchmarkRun.totalCases}`
-                    : latestBenchmarkRun
-                      ? 'Run benchmark again'
-                      : 'Run benchmark'}
-                </Button>
-                {currentBenchmarkRun?.status === 'running' && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs"
-                    onClick={() => stopBenchmarkMutation.mutate()}
-                    disabled={isBenchmarkStopping}
-                  >
-                    {isBenchmarkStopping ? 'Stopping...' : 'Stop'}
-                  </Button>
-                )}
-              </div>
-
-              {currentBenchmarkRun?.status === 'running' && (
-                <div className="space-y-3 rounded-lg border border-border/70 bg-background/50 p-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>Overall benchmark</span>
-                      <span>{currentBenchmarkRun.completedCases} / {currentBenchmarkRun.totalCases}</span>
-                    </div>
-                    <Progress value={benchmarkOverallPercent} />
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>{currentBenchmarkRun.currentCaseLabel ?? 'Preparing benchmark...'}</span>
-                      <span>
-                        {benchmarkCurrentPercent != null ? `${Math.round(benchmarkCurrentPercent)}%` : 'Starting...'}
-                      </span>
-                    </div>
-                    <Progress
-                      value={benchmarkCurrentPercent ?? 0}
-                      indeterminate={benchmarkCurrentPercent == null}
-                    />
-                    <p className="text-[11px] text-foreground">
-                      {currentBenchmarkProgress
-                        ? `${currentBenchmarkProgress.phase}${currentBenchmarkProgress.totalSteps > 0 ? ` · step ${currentBenchmarkProgress.step}/${currentBenchmarkProgress.totalSteps}` : ''}`
-                        : 'Waiting for iris progress output...'}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {benchmarkMutation.isError && (
-                <p className="text-[11px] text-destructive">
-                  {benchmarkMutation.error instanceof Error ? benchmarkMutation.error.message : 'Failed to start benchmark'}
-                </p>
-              )}
-              {stopBenchmarkMutation.isError && (
-                <p className="text-[11px] text-destructive">
-                  {stopBenchmarkMutation.error instanceof Error ? stopBenchmarkMutation.error.message : 'Failed to stop benchmark'}
-                </p>
-              )}
-              {benchmarkQuery.isError && (
-                <p className="text-[11px] text-destructive">
-                  {benchmarkQuery.error instanceof Error ? benchmarkQuery.error.message : 'Failed to load benchmark status'}
-                </p>
-              )}
-              {showLatestBenchmarkSamples && latestUsableBenchmarkRun && benchmarkReportRun && (
-                <div className="space-y-3">
-                  <p className="text-[10px] text-muted-foreground">
-                    {latestBenchmarkRun?.status === 'cancelled'
-                      ? `Last benchmark stopped early ${formatBenchmarkTimestamp(benchmarkReportRun)}. Completed cases are still kept for ETA calibration.`
-                      : `Last completed ${formatBenchmarkTimestamp(benchmarkReportRun)}.`}
-                  </p>
-                  <BenchmarkSampleGroup title="Text to Image" samples={latestTxtBenchmarkSamples} />
-                  <BenchmarkSampleGroup title="Image to Image" samples={latestImgBenchmarkSamples} />
-                </div>
-              )}
-              {latestBenchmarkRun?.status === 'failed' && latestBenchmarkRun.error && (
-                <p className="text-[11px] text-destructive">
-                  Last benchmark failed: {latestBenchmarkRun.error}
-                </p>
-              )}
-              {latestBenchmarkRun?.status === 'cancelled' && latestBenchmarkRun.samples.length === 0 && (
-                <p className="text-[11px] text-muted-foreground">
-                  Benchmark was stopped before any cases finished.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="flex-1 min-h-0 overflow-y-auto" onKeyDown={handleKeyDown}>
         <div className="p-4 pb-6 space-y-4">
-          {/* Mode selector */}
+
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground uppercase tracking-wider">Mode</Label>
-            <div className="grid grid-cols-3 gap-1">
-              <Button
-                variant={mode === 'txt2img' ? 'default' : 'secondary'}
-                size="sm"
-                className="text-xs"
-                onClick={() => handleModeChange('txt2img')}
-              >
-                <Sparkles className="h-3 w-3 mr-1" />
-                Text
-              </Button>
-              <Button
-                variant={mode === 'img2img' ? 'default' : 'secondary'}
-                size="sm"
-                className="text-xs"
-                onClick={() => handleModeChange('img2img')}
-              >
-                <Image className="h-3 w-3 mr-1" />
-                Image
-              </Button>
-              <Button
-                variant={mode === 'multi-ref' ? 'default' : 'secondary'}
-                size="sm"
-                className="text-xs"
-                onClick={() => handleModeChange('multi-ref')}
-              >
-                <Images className="h-3 w-3 mr-1" />
-                Multi
-              </Button>
-            </div>
+            <Label className="text-xs text-muted-foreground uppercase tracking-wider">Model</Label>
+            {hasInstalledModel ? (
+              <>
+                <Select value={selectedModel} onValueChange={(value) => setSelectedModel(value as ModelId)}>
+                  <SelectTrigger className="text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(modelsQuery.data?.models ?? []).map((modelOption) => (
+                      <SelectItem
+                        key={modelOption.id}
+                        value={modelOption.id}
+                        disabled={!modelOption.installed}
+                      >
+                        {modelOption.label}{modelOption.installed ? '' : ' · install first'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedModelInfo && (
+                  <div className="rounded-lg border border-border/70 bg-background/50 p-3 text-xs text-muted-foreground">
+                    <p className="text-foreground">{selectedModelInfo.summary}</p>
+                    <p className="mt-1">
+                      Recommended defaults: {selectedModelInfo.recommendedSteps} steps
+                      {selectedModelInfo.recommendedGuidance != null ? ` · guidance ${selectedModelInfo.recommendedGuidance}` : ' · CFG'}
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="rounded-lg border border-dashed border-border bg-background/50 p-3 text-sm text-muted-foreground">
+                <p>No model installed yet.</p>
+                <Link href="/models" className="mt-2 inline-flex items-center gap-1 text-primary hover:text-primary/80">
+                  Download a model
+                </Link>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wider">LoRAs</Label>
+            {selectableLoras.length > 0 ? (
+              <div className="space-y-2">
+                <Select
+                  value={selectedLoraId ?? '__none__'}
+                  onValueChange={(value) => setSelectedLoraId(value === '__none__' ? null : value)}
+                >
+                  <SelectTrigger className="text-sm">
+                    <SelectValue placeholder="No LoRA selected" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {selectableLoras.map((lora) => (
+                      <SelectItem key={lora.id} value={lora.id}>
+                        <span className="truncate">{lora.filename}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedLora && (
+                  <div className="rounded-lg border border-border/70 bg-background/50 p-3">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span>Strength</span>
+                      <span className="font-mono text-foreground">{loraScale.toFixed(2)}</span>
+                    </div>
+                    <Slider
+                      className="mt-3"
+                      value={[loraScale]}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      onValueChange={(value) => setLoraScale(value[0] ?? 1)}
+                    />
+                    <p className="mt-2 text-[10px] text-muted-foreground">
+                      0.0 = no effect, 1.0 = default, 2.0 = maximum
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : compatibleLoras.length > 0 ? (
+              <div className="rounded-lg border border-dashed border-border bg-background/50 p-3 text-xs text-muted-foreground">
+                Compatible LoRAs found but none are ready for use with this model.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-border bg-background/50 p-3 text-xs text-muted-foreground">
+                No compatible LoRAs for this model. <Link href="/loras" className="text-primary hover:text-primary/80">Upload one</Link> to get started.
+              </div>
+            )}
           </div>
 
           {/* Prompt */}
@@ -883,8 +858,8 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
               {batchPrompts.length > 0
                 ? `Using ${batchPrompts.length} prompts from ${batchPromptFileName || 'the uploaded file'}. Clear it to use the text box again.`
                 : mode === 'txt2img'
-                ? 'Describe the desired output in detail.'
-                : 'Describe what the output should look like, using the uploaded image as context.'}
+                ? 'Describe what you want to see, e.g. "a cat sitting on a cloud at sunset".'
+                : 'Describe the result you want. Your reference image provides visual context.'}
             </p>
             {batchPromptFileName && (
               <div className="flex items-center gap-2 rounded border border-border/60 bg-secondary/30 px-2 py-2 text-xs">
@@ -942,16 +917,23 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
                 <div className="space-y-1">
                   {refImages.map((ref, i) => (
                     <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary rounded px-2 py-1">
-                      <img
-                        src={getUploadUrl(ref.filename)}
-                        alt=""
-                        className="w-8 h-8 rounded object-cover shrink-0"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage(getUploadUrl(ref.filename))}
+                        className="shrink-0 rounded transition-opacity hover:opacity-80"
+                        title="Click to preview"
+                      >
+                        <img
+                          src={getUploadUrl(ref.filename)}
+                          alt=""
+                          className="w-8 h-8 rounded object-cover"
+                        />
+                      </button>
                       <div className="flex-1 min-w-0">
-                        <span className="block truncate">{ref.filename.slice(0, 8)}…</span>
+                        <span className="block truncate text-foreground/80" title={ref.filename}>{ref.filename}</span>
                         <span className="text-[10px]">{ref.width}×{ref.height}</span>
                       </div>
-                      <button onClick={() => removeFile(i)} className="hover:text-foreground">
+                      <button onClick={() => removeFile(i)} className="shrink-0 hover:text-foreground">
                         <X className="h-3 w-3" />
                       </button>
                     </div>
@@ -1015,7 +997,7 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
                 </div>
               </div>
               <p className="text-[10px] text-muted-foreground">
-                Must be multiples of 16. Values above 1792 are capped.
+                Dimensions snap to multiples of 16, max 1792 per side.
               </p>
             </div>
           ) : (
@@ -1069,33 +1051,6 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
             />
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground uppercase tracking-wider">Queue</Label>
-              <span className="text-[10px] text-muted-foreground">1-12 jobs</span>
-            </div>
-            <Input
-              type="number"
-              min={1}
-              max={12}
-              step={1}
-              value={queueCount}
-              onChange={(e) => setQueueCount(e.target.value)}
-              className="text-sm"
-              disabled={batchPrompts.length > 0}
-            />
-            {batchPrompts.length > 0 && (
-              <p className="text-[10px] text-muted-foreground">
-                Queue count is driven by the uploaded prompt file.
-              </p>
-            )}
-            {baseSeed != null && queueTotal > 1 && (
-              <p className="text-[10px] text-muted-foreground">
-                Seeds will increment from {baseSeed} to {baseSeed + queueTotal - 1}.
-              </p>
-            )}
-          </div>
-
           {/* Advanced settings */}
           <div className="space-y-2">
             <button
@@ -1128,6 +1083,56 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
                     className="text-sm"
                   />
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Iterations</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    placeholder="1"
+                    value={iterations}
+                    onChange={(e) => setIterations(e.target.value)}
+                    className="text-sm"
+                    disabled={batchPrompts.length > 0}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    {batchPrompts.length > 0
+                      ? 'Iterations are driven by the uploaded prompt file.'
+                      : 'Number of images to generate with these settings.'}
+                  </p>
+                </div>
+                {parseInt(iterations, 10) >= 2 && batchPrompts.length === 0 && (
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Seed behavior</Label>
+                    <div className="grid grid-cols-2 gap-1">
+                      <Button
+                        type="button"
+                        variant={seedMode === 'same' ? 'default' : 'secondary'}
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => setSeedMode('same')}
+                      >
+                        Same seed
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={seedMode === 'random' ? 'default' : 'secondary'}
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => setSeedMode('random')}
+                      >
+                        Varied seeds
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      {seedMode === 'same'
+                        ? 'All iterations will use the same seed for identical results.'
+                        : baseSeed != null
+                          ? `Seeds will increment: ${baseSeed}, ${baseSeed + 1}, ${baseSeed + 2}...`
+                          : 'Each iteration will use a different random seed.'}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1139,14 +1144,14 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
         {canEstimate && (
           <div className={`rounded-md border border-border bg-secondary/30 p-3 ${showTotalEstimate || showEstimateMessage ? 'space-y-2' : ''}`}>
             <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Est. generation</span>
+              <span className="text-muted-foreground">Estimated time</span>
               <span className="font-mono tabular-nums text-foreground">
                 {estimatedGeneration ?? '--:--'}
               </span>
             </div>
             {showTotalEstimate && (
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Est. total incl. queue</span>
+                <span className="text-muted-foreground">Total with queue</span>
                 <span className="font-mono tabular-nums text-foreground">
                   {estimatedTotal ?? '--:--'}
                 </span>
@@ -1154,7 +1159,7 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
             )}
             {estimateUnavailable && (
               <p className="text-[10px] text-muted-foreground">
-                Estimate will improve after a few completed generations.
+                Time estimates improve after you run a few generations.
               </p>
             )}
             {estimateQuery.isError && !estimateData && (
@@ -1172,89 +1177,56 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
         <Button
           className="w-full"
           onClick={handleGenerate}
-          disabled={isLoading || !canGenerate || isBenchmarkPending}
+          disabled={isLoading || !canGenerate || isBenchmarkActive}
         >
           {buttonLabel}
           <span className="ml-2 text-xs text-primary-foreground/60">⌘↵</span>
         </Button>
-        {isBenchmarkPending && (
+        {isBenchmarkActive && (
           <p className="text-xs text-muted-foreground">
-            Benchmark is running. Generation is temporarily paused.
+            A benchmark is running. Generation will resume when it finishes.
+          </p>
+        )}
+        {!hasInstalledModel && (
+          <p className="text-xs text-muted-foreground">
+            You need to install a model first. Go to the <Link href="/models" className="text-primary hover:text-primary/80">Models</Link> page to download one.
+          </p>
+        )}
+        {hasSelectedLora && (
+          <p className="text-xs text-muted-foreground">
+            Using LoRA: {selectedLora?.filename} (strength {loraScale.toFixed(2)})
           </p>
         )}
         {!hasRequiredReferences && (
           <p className="mt-2 text-xs text-muted-foreground">
             {mode === 'img2img'
-              ? 'Upload one image to use image-to-image.'
-              : 'Upload at least two images to use multi-reference mode.'}
+              ? 'Upload a reference image above to use Image mode.'
+              : 'Upload at least 2 reference images above to use Multi mode.'}
           </p>
         )}
       </div>
-    </div>
-  );
-}
 
-function BenchmarkSampleGroup({
-  title,
-  samples,
-}: {
-  title: string;
-  samples: BenchmarkRun['samples'];
-}) {
-  if (samples.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-[11px]">
-        <span className="text-foreground">{title}</span>
-        <span className="text-muted-foreground">{samples.length} cases</span>
-      </div>
-      <div className="space-y-1 rounded border border-border/50 bg-background/40 p-2">
-        {samples.map((sample) => (
-          <div key={sample.id} className="flex items-center justify-between text-[11px]">
-            <span className="text-muted-foreground">
-              {sample.label}
-            </span>
-            <span className="font-mono tabular-nums text-foreground">
-              {(sample.durationMs / 1000).toFixed(1)}s
-            </span>
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-h-[85vh] max-w-[85vw]">
+            <img
+              src={previewImage}
+              alt="Reference preview"
+              className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
+            />
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              className="absolute -right-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full bg-card border border-border text-foreground shadow-lg hover:bg-secondary"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-        ))}
-        {samples.length < CURRENT_BENCHMARK_LABELS.length && (
-          <p className="text-[10px] text-muted-foreground">
-            Run benchmark again to fill the current preset set.
-          </p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
-}
-
-function getCurrentBenchmarkSamples(
-  run: BenchmarkRun | null,
-  mode: Extract<BenchmarkRun['samples'][number]['mode'], 'txt2img' | 'img2img'>
-) {
-  if (!run) {
-    return [];
-  }
-
-  return run.samples
-    .filter((sample) => sample.mode === mode && CURRENT_BENCHMARK_LABEL_SET.has(sample.label))
-    .sort((left, right) => {
-      const leftOrder = CURRENT_BENCHMARK_LABEL_ORDER.get(left.label) ?? Number.MAX_SAFE_INTEGER;
-      const rightOrder = CURRENT_BENCHMARK_LABEL_ORDER.get(right.label) ?? Number.MAX_SAFE_INTEGER;
-      return leftOrder - rightOrder;
-    });
-}
-
-function formatBenchmarkTimestamp(run: BenchmarkRun) {
-  const value = run.finishedAt ?? run.startedAt;
-  return new Date(value).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
 }

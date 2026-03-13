@@ -12,12 +12,12 @@
       <stop stop-color="#4E6F57"/>
       <stop offset="1" stop-color="#D7C197"/>
     </linearGradient>
-    <linearGradient id="outputGrad" x1="544" y1="182" x2="1052" y2="728" gradientUnits="userSpaceOnUse">
+    <linearGradient id="outputGrad" x1="660" y1="182" x2="1168" y2="728" gradientUnits="userSpaceOnUse">
       <stop stop-color="#31453C"/>
       <stop offset="0.5" stop-color="#B08D58"/>
       <stop offset="1" stop-color="#E1C9A7"/>
     </linearGradient>
-    <linearGradient id="leafGlow" x1="674" y1="194" x2="960" y2="604" gradientUnits="userSpaceOnUse">
+    <linearGradient id="leafGlow" x1="790" y1="194" x2="1076" y2="604" gradientUnits="userSpaceOnUse">
       <stop stop-color="#EBDBAF" stop-opacity="0.85"/>
       <stop offset="1" stop-color="#EBDBAF" stop-opacity="0"/>
     </linearGradient>
@@ -34,7 +34,7 @@
       <rect x="130" y="80" width="1340" height="820" rx="28"/>
     </clipPath>
     <clipPath id="canvasClip">
-      <rect x="548" y="166" width="512" height="560" rx="18"/>
+      <rect x="664" y="166" width="512" height="560" rx="18"/>
     </clipPath>
     <clipPath id="refClip">
       <rect x="176" y="453" width="36" height="36" rx="8"/>
@@ -108,23 +108,23 @@
     <text x="890" y="108" fill="#BDBDBD" font-size="12" font-family="JetBrains Mono, monospace">Seed: 9043312</text>
     <text x="1048" y="108" fill="#BDBDBD" font-size="12" font-family="Inter, Arial, sans-serif">21.4s</text>
 
-    <rect x="536" y="154" width="536" height="584" rx="28" fill="#141414" stroke="#2B2B2B"/>
+    <rect x="572" y="154" width="464" height="584" rx="28" fill="#141414" stroke="#2B2B2B"/>
     <g clip-path="url(#canvasClip)">
-      <g transform="translate(-116 0)">
-        <rect x="664" y="166" width="512" height="560" fill="url(#outputGrad)"/>
-        <rect x="664" y="640" width="512" height="86" fill="#1A201C" opacity="0.28"/>
-        <circle cx="934" cy="274" r="132" fill="url(#leafGlow)"/>
-        <rect x="824" y="400" width="170" height="212" rx="16" fill="#503D2A"/>
-        <rect x="844" y="420" width="132" height="132" rx="12" fill="#E4D4B9"/>
-        <path d="M754 644C786 560 826 498 872 460C914 426 950 414 980 424C1028 442 1060 492 1076 578C1028 588 992 604 958 624C908 654 852 670 790 672L754 644Z" fill="#273A31"/>
-        <path d="M758 448C792 366 850 320 932 312C1018 320 1076 366 1100 448C1060 430 1028 430 998 448C970 404 934 382 888 380C840 380 798 402 758 448Z" fill="#304A40"/>
-        <path d="M716 498C752 472 786 470 818 494C800 530 796 564 804 596C760 590 732 558 716 498Z" fill="#6A8A5A"/>
-        <path d="M1108 494C1072 472 1038 470 1006 494C1024 530 1028 564 1020 596C1064 590 1092 558 1108 494Z" fill="#6A8A5A"/>
-        <path d="M914 186C944 222 966 276 980 350" stroke="#D4E2A6" stroke-width="10" stroke-linecap="round"/>
-        <path d="M898 210C858 238 832 278 822 330" stroke="#D4E2A6" stroke-width="8" stroke-linecap="round"/>
-        <path d="M980 216C1022 250 1048 286 1058 336" stroke="#D4E2A6" stroke-width="8" stroke-linecap="round"/>
-        <ellipse cx="914" cy="614" rx="104" ry="26" fill="#111111" opacity="0.18"/>
+      <g transform="translate(-104 0)">
+        <rect width="512" height="560" fill="url(#outputGrad)"/>
       </g>
+      <rect x="664" y="640" width="512" height="86" fill="#1A201C" opacity="0.28"/>
+      <circle cx="934" cy="274" r="132" fill="url(#leafGlow)"/>
+      <rect x="824" y="400" width="170" height="212" rx="16" fill="#503D2A"/>
+      <rect x="844" y="420" width="132" height="132" rx="12" fill="#E4D4B9"/>
+      <path d="M754 644C786 560 826 498 872 460C914 426 950 414 980 424C1028 442 1060 492 1076 578C1028 588 992 604 958 624C908 654 852 670 790 672L754 644Z" fill="#273A31"/>
+      <path d="M758 448C792 366 850 320 932 312C1018 320 1076 366 1100 448C1060 430 1028 430 998 448C970 404 934 382 888 380C840 380 798 402 758 448Z" fill="#304A40"/>
+      <path d="M716 498C752 472 786 470 818 494C800 530 796 564 804 596C760 590 732 558 716 498Z" fill="#6A8A5A"/>
+      <path d="M1108 494C1072 472 1038 470 1006 494C1024 530 1028 564 1020 596C1064 590 1092 558 1108 494Z" fill="#6A8A5A"/>
+      <path d="M914 186C944 222 966 276 980 350" stroke="#D4E2A6" stroke-width="10" stroke-linecap="round"/>
+      <path d="M898 210C858 238 832 278 822 330" stroke="#D4E2A6" stroke-width="8" stroke-linecap="round"/>
+      <path d="M980 216C1022 250 1048 286 1058 336" stroke="#D4E2A6" stroke-width="8" stroke-linecap="round"/>
+      <ellipse cx="914" cy="614" rx="104" ry="26" fill="#111111" opacity="0.18"/>
     </g>
 
     <rect x="466" y="840" width="676" height="60" fill="#101010"/>

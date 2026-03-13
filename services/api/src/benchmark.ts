@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import { config } from './config.js';
 import { queries, type BenchmarkRunRow, type BenchmarkSampleRow } from './db.js';
 import { consumeProgressBuffer, createInitialProgressState, parseProgressLine, stripAnsi, type ProgressData } from './iris-progress.js';
+import { getInstalledModelPath, SUPPORTED_MODELS, type ModelId } from './models.js';
 
 type BenchmarkMode = 'txt2img' | 'img2img';
 
@@ -102,7 +103,45 @@ export function getLatestUsableBenchmarkRun() {
   };
 }
 
-export function startBenchmarkRun() {
+export function getLatestBenchmarkRunsByModel() {
+  const result = {} as Partial<Record<ModelId, ReturnType<typeof getLatestBenchmarkRun>>>;
+
+  for (const model of SUPPORTED_MODELS) {
+    const row = queries.getLatestFinishedBenchmarkRunByModel.get(model.id) as BenchmarkRunRow | undefined;
+    if (!row) {
+      continue;
+    }
+
+    result[model.id] = {
+      row,
+      samples: queries.listBenchmarkSamplesByRun.all(row.id) as BenchmarkSampleRow[],
+      progress: null,
+    };
+  }
+
+  return result;
+}
+
+export function getLatestUsableBenchmarkRunsByModel() {
+  const result = {} as Partial<Record<ModelId, ReturnType<typeof getLatestUsableBenchmarkRun>>>;
+
+  for (const model of SUPPORTED_MODELS) {
+    const row = queries.getLatestFinishedBenchmarkRunWithSamplesByModel.get(model.id) as BenchmarkRunRow | undefined;
+    if (!row) {
+      continue;
+    }
+
+    result[model.id] = {
+      row,
+      samples: queries.listBenchmarkSamplesByRun.all(row.id) as BenchmarkSampleRow[],
+      progress: null,
+    };
+  }
+
+  return result;
+}
+
+export function startBenchmarkRun(modelId: ModelId = config.defaultModel as ModelId) {
   if (isBenchmarkRunning()) {
     const current = getCurrentBenchmarkRun();
     if (current) {
@@ -112,11 +151,11 @@ export function startBenchmarkRun() {
   }
 
   const runId = randomUUID();
-  queries.insertBenchmarkRun.run(runId, BENCHMARK_CASES.length, BENCHMARK_CASES[0]?.label ?? null);
+  queries.insertBenchmarkRun.run(runId, modelId, BENCHMARK_CASES.length, BENCHMARK_CASES[0]?.label ?? null);
   runningBenchmarkId = runId;
   cancelBenchmarkRequested = false;
 
-  void runBenchmark(runId);
+  void runBenchmark(runId, modelId);
 
   const row = queries.getBenchmarkRun.get(runId) as BenchmarkRunRow;
   return {
@@ -146,7 +185,7 @@ export function cancelBenchmarkRun() {
   return true;
 }
 
-async function runBenchmark(runId: string) {
+async function runBenchmark(runId: string, modelId: ModelId) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-benchmark-'));
 
   try {
@@ -159,7 +198,7 @@ async function runBenchmark(runId: string) {
 
       currentBenchmarkProgress = null;
       queries.updateBenchmarkRunProgress.run(completedCases, benchmarkCase.label, runId);
-      const durationMs = await runBenchmarkCase(benchmarkCase, tmpDir);
+      const durationMs = await runBenchmarkCase(benchmarkCase, tmpDir, modelId);
 
       queries.insertBenchmarkSample.run(
         randomUUID(),
@@ -197,10 +236,15 @@ async function runBenchmark(runId: string) {
   }
 }
 
-async function runBenchmarkCase(benchmarkCase: BenchmarkCase, tmpDir: string) {
+async function runBenchmarkCase(benchmarkCase: BenchmarkCase, tmpDir: string, modelId: ModelId) {
+  const modelPath = getInstalledModelPath(modelId);
+  if (!modelPath) {
+    throw new Error(`Benchmark model is not installed: ${modelId}`);
+  }
+
   const outputPath = path.join(tmpDir, `${benchmarkCase.mode}-${benchmarkCase.width}x${benchmarkCase.height}.png`);
   const args: string[] = [
-    '-d', config.irisModelDir,
+    '-d', modelPath,
     '-p', benchmarkCase.prompt,
     '-W', String(benchmarkCase.width),
     '-H', String(benchmarkCase.height),

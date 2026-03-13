@@ -5,6 +5,8 @@ import fastifyStatic from '@fastify/static';
 import { config } from './config.js';
 import { jobRoutes } from './routes/jobs.js';
 import { benchmarkRoutes } from './routes/benchmark.js';
+import { modelRoutes } from './routes/models.js';
+import { loraRoutes } from './routes/loras.js';
 import { uploadRoutes } from './routes/uploads.js';
 import { restoreQueuedJobs } from './worker.js';
 import { restoreBenchmarkRuns } from './benchmark.js';
@@ -17,8 +19,8 @@ await app.register(cors, {
 
 await app.register(multipart, {
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB
-    files: 16,
+    fileSize: 2 * 1024 * 1024 * 1024, // Allow local LoRA uploads as streamed safetensors files.
+    files: 32,
   },
 });
 
@@ -45,6 +47,8 @@ await app.register(fastifyStatic, {
 
 await app.register(jobRoutes);
 await app.register(benchmarkRoutes);
+await app.register(modelRoutes);
+await app.register(loraRoutes);
 await app.register(uploadRoutes);
 
 restoreQueuedJobs();

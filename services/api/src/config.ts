@@ -14,7 +14,8 @@ export const config = {
   host: process.env.HOST ?? '127.0.0.1',
 
   irisBin: process.env.IRIS_BIN ?? path.join(ROOT, 'vendor/iris.c/iris'),
-  irisModelDir: process.env.IRIS_MODEL_DIR ?? path.join(ROOT, '../AI/models/flux-klein-9b'),
+  irisModelDir: process.env.IRIS_MODEL_DIR ?? path.join(ROOT, 'Models'),
+  irisLoraDir: process.env.IRIS_LORA_DIR ?? path.join(ROOT, 'Loras'),
 
   outputDir: process.env.IRIS_OUTPUT_DIR ?? path.join(ROOT, 'storage/outputs'),
   uploadDir: process.env.IRIS_UPLOAD_DIR ?? path.join(ROOT, 'storage/uploads'),

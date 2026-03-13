@@ -1,23 +1,51 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { getQueueSnapshot } from '../worker.js';
-import { cancelBenchmarkRun, getCurrentBenchmarkRun, getLatestBenchmarkRun, getLatestUsableBenchmarkRun, isBenchmarkRunning, startBenchmarkRun } from '../benchmark.js';
+import { cancelBenchmarkRun, getCurrentBenchmarkRun, getLatestBenchmarkRun, getLatestBenchmarkRunsByModel, getLatestUsableBenchmarkRun, getLatestUsableBenchmarkRunsByModel, isBenchmarkRunning, startBenchmarkRun } from '../benchmark.js';
 import type { BenchmarkRunRow, BenchmarkSampleRow } from '../db.js';
 import type { ProgressData } from '../iris-progress.js';
+import { isSupportedModelId } from '../models.js';
+
+const startBenchmarkSchema = z.object({
+  model: z.string().optional(),
+});
 
 export async function benchmarkRoutes(app: FastifyInstance) {
   app.get('/api/benchmark', async () => {
     const currentRun = getCurrentBenchmarkRun();
     const latestRun = getLatestBenchmarkRun();
     const latestUsableRun = getLatestUsableBenchmarkRun();
+    const latestRunsByModel = getLatestBenchmarkRunsByModel();
+    const latestUsableRunsByModel = getLatestUsableBenchmarkRunsByModel();
 
     return {
       currentRun: currentRun ? formatBenchmarkRun(currentRun.row, currentRun.samples, currentRun.progress) : null,
       latestRun: latestRun ? formatBenchmarkRun(latestRun.row, latestRun.samples, latestRun.progress) : null,
       latestUsableRun: latestUsableRun ? formatBenchmarkRun(latestUsableRun.row, latestUsableRun.samples, latestUsableRun.progress) : null,
+      latestRunsByModel: Object.fromEntries(
+        Object.entries(latestRunsByModel).map(([modelId, run]) => [modelId, run ? formatBenchmarkRun(run.row, run.samples, run.progress) : null])
+      ),
+      latestUsableRunsByModel: Object.fromEntries(
+        Object.entries(latestUsableRunsByModel).map(([modelId, run]) => [modelId, run ? formatBenchmarkRun(run.row, run.samples, run.progress) : null])
+      ),
     };
   });
 
   app.post('/api/benchmark/run', async (req, reply) => {
+    const parsed = startBenchmarkSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    const requestedModel = parsed.data.model;
+    if (requestedModel && !isSupportedModelId(requestedModel)) {
+      return reply.status(400).send({ error: 'Unsupported model' });
+    }
+    const benchmarkModel = requestedModel && isSupportedModelId(requestedModel) ? requestedModel : undefined;
+
     if (isBenchmarkRunning()) {
       const currentRun = getCurrentBenchmarkRun();
       return reply.status(409).send({
@@ -31,7 +59,7 @@ export async function benchmarkRoutes(app: FastifyInstance) {
       return reply.status(409).send({ error: 'Benchmark requires an empty generation queue' });
     }
 
-    const run = startBenchmarkRun();
+    const run = startBenchmarkRun(benchmarkModel);
     return reply.status(202).send(formatBenchmarkRun(run.row, run.samples, run.progress));
   });
 
@@ -53,6 +81,7 @@ export async function benchmarkRoutes(app: FastifyInstance) {
 function formatBenchmarkRun(row: BenchmarkRunRow, samples: BenchmarkSampleRow[], progress: ProgressData | null) {
   return {
     id: row.id,
+    model: row.model,
     status: row.status,
     totalCases: row.total_cases,
     completedCases: row.completed_cases,

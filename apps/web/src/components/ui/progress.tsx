@@ -28,7 +28,7 @@ export function Progress({
     >
       <div
         className={cn(
-          'h-full rounded-full bg-primary transition-[width,transform] duration-500 ease-out',
+          'h-full rounded-full bg-primary transition-[width,transform] duration-300 ease-out',
           indeterminate ? 'w-[35%] animate-progress-indeterminate' : undefined,
           indicatorClassName
         )}

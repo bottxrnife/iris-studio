@@ -9,6 +9,8 @@ import { queries, type JobRow } from '../db.js';
 import { cancelJob, enqueueJob, getJobProgress, getQueueSnapshot, onJobUpdate, type ProgressData, type QueueSnapshot } from '../worker.js';
 import { config } from '../config.js';
 import { BENCHMARK_CASES, isBenchmarkRunning } from '../benchmark.js';
+import { getInstalledModelPath, isSupportedModelId } from '../models.js';
+import { getLoraById } from '../loras.js';
 
 const IRIS_REFERENCE_TEXT_SEQ = 512;
 const FLUX_9B_REFERENCE_HEADS = 32;
@@ -35,7 +37,27 @@ export async function jobRoutes(app: FastifyInstance) {
       });
     }
 
-    const { mode, prompt, width, height, seed, steps, guidance, inputPaths } = parsed.data;
+    const { mode, prompt, model, loraId, loraScale, width, height, seed, steps, guidance, inputPaths } = parsed.data;
+    const selectedModel = model ?? config.defaultModel;
+
+    if (!isSupportedModelId(selectedModel)) {
+      return reply.status(400).send({ error: 'Unsupported model' });
+    }
+
+    if (!getInstalledModelPath(selectedModel)) {
+      return reply.status(409).send({ error: `Model is not installed: ${selectedModel}` });
+    }
+
+    const selectedLora = loraId ? getLoraById(loraId) : null;
+    if (loraId && !selectedLora) {
+      return reply.status(404).send({ error: `LoRA not found: ${loraId}` });
+    }
+    if (selectedLora && !selectedLora.runtimeReady) {
+      return reply.status(409).send({ error: selectedLora.runtimeReadyReason });
+    }
+    if (selectedLora && !selectedLora.compatibleModelIds.includes(selectedModel)) {
+      return reply.status(409).send({ error: `${selectedLora.filename} is not compatible with ${selectedModel}` });
+    }
 
     // Validate mode vs inputs
     if (mode === 'img2img' && (!inputPaths || inputPaths.length === 0)) {
@@ -56,7 +78,10 @@ export async function jobRoutes(app: FastifyInstance) {
       prompt,
       resolvedSize.width,
       resolvedSize.height,
-      config.defaultModel,
+      selectedModel,
+      selectedLora?.id ?? null,
+      selectedLora?.filename ?? null,
+      selectedLora ? (loraScale ?? 1) : null,
       steps ?? null,
       guidance ?? null,
       inputPaths ? JSON.stringify(inputPaths) : null
@@ -83,7 +108,7 @@ export async function jobRoutes(app: FastifyInstance) {
       });
     }
 
-    const { mode, width, height, steps, guidance, inputCount, quantity } = parsed.data;
+    const { mode, model, width, height, steps, guidance, inputCount, quantity } = parsed.data;
 
     if (mode === 'img2img' && inputCount < 1) {
       return reply.status(400).send({ error: 'img2img requires at least one input image' });
@@ -95,7 +120,11 @@ export async function jobRoutes(app: FastifyInstance) {
     const resolvedSize = mode === 'txt2img'
       ? { width, height }
       : fitImageEditSizeForReferenceBudget(width, height, inputCount);
-    const context = buildFormatJobContext({ includeProjectedActiveSample: false });
+    const context = buildFormatJobContext({
+      includeProjectedActiveSample: false,
+      benchmarkModelId: model,
+      targetModel: model,
+    });
     const target: EstimationTarget = {
       mode,
       pixels: resolvedSize.width * resolvedSize.height,
@@ -354,6 +383,7 @@ function fitImageEditSizeForReferenceBudget(width: number, height: number, refer
 
 interface FormatJobContext extends QueueSnapshot {
   now: number;
+  targetModel: string | null;
   timingSamples: TimingSample[];
   queuedJobsById: Map<string, JobRow>;
   activeJob: JobRow | null;
@@ -361,6 +391,7 @@ interface FormatJobContext extends QueueSnapshot {
 
 interface TimingSample {
   source: 'job' | 'benchmark';
+  model: string | null;
   mode: string;
   pixels: number;
   aspectRatio: number;
@@ -380,16 +411,18 @@ interface EstimationTarget {
   guidance: number | null;
 }
 
-const HISTORY_SAMPLE_LIMIT = 30;
-const NEIGHBOR_SAMPLE_LIMIT = 8;
-const MIN_MODE_SAMPLE_COUNT = 4;
+const HISTORY_SAMPLE_LIMIT = 50;
+const NEIGHBOR_SAMPLE_LIMIT = 10;
+const MIN_MODE_SAMPLE_COUNT = 3;
 
 interface BuildFormatJobContextOptions {
   includeProjectedActiveSample?: boolean;
+  benchmarkModelId?: string | null;
+  targetModel?: string | null;
 }
 
 function buildFormatJobContext(options: BuildFormatJobContextOptions = {}): FormatJobContext {
-  const { includeProjectedActiveSample = true } = options;
+  const { includeProjectedActiveSample = true, benchmarkModelId = null, targetModel = null } = options;
   const queueSnapshot = getQueueSnapshot();
   const now = Date.now();
   const activeJob = queueSnapshot.activeJobId
@@ -404,10 +437,13 @@ function buildFormatJobContext(options: BuildFormatJobContextOptions = {}): Form
     }
   }
 
+  const resolvedModel = targetModel ?? benchmarkModelId ?? activeJob?.model ?? null;
+
   return {
     ...queueSnapshot,
     now,
-    timingSamples: getTimingSamples(activeJob, queueSnapshot, now, includeProjectedActiveSample),
+    targetModel: resolvedModel,
+    timingSamples: getTimingSamples(activeJob, queueSnapshot, now, includeProjectedActiveSample, benchmarkModelId, resolvedModel),
     queuedJobsById,
     activeJob,
   };
@@ -417,71 +453,72 @@ function getTimingSamples(
   activeJob: JobRow | null,
   snapshot: QueueSnapshot,
   now: number,
-  includeProjectedActiveSample: boolean
+  includeProjectedActiveSample: boolean,
+  benchmarkModelId: string | null,
+  targetModel: string | null
 ): TimingSample[] {
-  const jobRows = queries.listRecentCompletedTimingSamples.all(HISTORY_SAMPLE_LIMIT) as Array<{
-    mode: string;
-    width: number;
-    height: number;
-    steps: number | null;
-    guidance: number | null;
-    input_paths: string | null;
-    duration_ms: number;
+  const modelForJobs = targetModel ?? benchmarkModelId ?? null;
+  const modelJobRows = modelForJobs
+    ? queries.listRecentCompletedTimingSamplesByModel.all(modelForJobs, HISTORY_SAMPLE_LIMIT) as Array<{
+      mode: string; model: string; width: number; height: number;
+      steps: number | null; guidance: number | null; input_paths: string | null; duration_ms: number;
+    }>
+    : [];
+  const allJobRows = queries.listRecentCompletedTimingSamples.all(HISTORY_SAMPLE_LIMIT) as Array<{
+    mode: string; model: string; width: number; height: number;
+    steps: number | null; guidance: number | null; input_paths: string | null; duration_ms: number;
   }>;
+  const jobRows = modelJobRows.length >= MIN_MODE_SAMPLE_COUNT ? modelJobRows : allJobRows;
 
-  const jobSamples: Array<TimingSample | null> = jobRows
-    .map((row, index) => {
-      const pixels = row.width * row.height;
-      if (!Number.isFinite(row.duration_ms) || pixels <= 0) {
-        return null;
-      }
-
-      return {
-        source: 'job',
-        mode: row.mode,
-        pixels,
-        aspectRatio: row.width / row.height,
-        inputCount: getInputCount(row.input_paths),
-        steps: row.steps,
-        guidance: row.guidance,
-        durationMs: row.duration_ms,
-        recencyRank: index,
-      } satisfies TimingSample;
+  const jobSamples: TimingSample[] = [];
+  for (let index = 0; index < jobRows.length; index++) {
+    const row = jobRows[index];
+    const pixels = row.width * row.height;
+    if (!Number.isFinite(row.duration_ms) || pixels <= 0) continue;
+    jobSamples.push({
+      source: 'job',
+      model: row.model,
+      mode: row.mode,
+      pixels,
+      aspectRatio: row.width / row.height,
+      inputCount: getInputCount(row.input_paths),
+      steps: row.steps,
+      guidance: row.guidance,
+      durationMs: row.duration_ms,
+      recencyRank: index,
     });
+  }
 
-  const benchmarkRows = queries.listLatestBenchmarkTimingSamples.all(HISTORY_SAMPLE_LIMIT) as Array<{
-    mode: string;
-    width: number;
-    height: number;
-    input_count: number;
-    duration_ms: number;
-  }>;
+  const benchmarkRows = benchmarkModelId
+    ? queries.listLatestBenchmarkTimingSamples.all(benchmarkModelId, HISTORY_SAMPLE_LIMIT) as Array<{
+      mode: string; width: number; height: number; input_count: number; duration_ms: number;
+    }>
+    : [];
 
-  const benchmarkSamples: Array<TimingSample | null> = benchmarkRows
-    .filter((row) => VALID_BENCHMARK_CASE_KEYS.has(`${row.mode}:${row.width}:${row.height}:${row.input_count}`))
-    .map((row, index) => {
-      const pixels = row.width * row.height;
-      if (!Number.isFinite(row.duration_ms) || pixels <= 0) {
-        return null;
-      }
-
-      return {
-        source: 'benchmark',
-        mode: row.mode,
-        pixels,
-        aspectRatio: row.width / row.height,
-        inputCount: row.input_count,
-        steps: null,
-        guidance: null,
-        durationMs: row.duration_ms,
-        recencyRank: index,
-      } satisfies TimingSample;
+  const benchmarkSamples: TimingSample[] = [];
+  let benchmarkIndex = 0;
+  for (const row of benchmarkRows) {
+    if (!VALID_BENCHMARK_CASE_KEYS.has(`${row.mode}:${row.width}:${row.height}:${row.input_count}`)) continue;
+    const pixels = row.width * row.height;
+    if (!Number.isFinite(row.duration_ms) || pixels <= 0) continue;
+    benchmarkSamples.push({
+      source: 'benchmark',
+      model: benchmarkModelId,
+      mode: row.mode,
+      pixels,
+      aspectRatio: row.width / row.height,
+      inputCount: row.input_count,
+      steps: null,
+      guidance: null,
+      durationMs: row.duration_ms,
+      recencyRank: benchmarkIndex,
     });
+    benchmarkIndex++;
+  }
 
-  const samples: TimingSample[] = [
-    ...benchmarkSamples.filter((sample): sample is TimingSample => sample !== null),
-    ...jobSamples.filter((sample): sample is TimingSample => sample !== null),
-  ];
+  let samples: TimingSample[] = [...benchmarkSamples, ...jobSamples];
+
+  samples = removeOutliers(samples, targetModel);
 
   if (includeProjectedActiveSample) {
     const projectedActiveSample = getProjectedActiveSample(activeJob, snapshot, now);
@@ -491,6 +528,48 @@ function getTimingSamples(
   }
 
   return samples;
+}
+
+function removeOutliers(samples: TimingSample[], targetModel: string | null): TimingSample[] {
+  if (samples.length < 6) return samples;
+
+  const groups = new Map<string, TimingSample[]>();
+  for (const sample of samples) {
+    const key = `${sample.mode}:${sample.model ?? 'any'}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = [];
+      groups.set(key, group);
+    }
+    group.push(sample);
+  }
+
+  const kept: TimingSample[] = [];
+  for (const [, group] of groups) {
+    if (group.length < 4) {
+      kept.push(...group);
+      continue;
+    }
+
+    const msPerPixelValues = group
+      .map((s) => s.durationMs / s.pixels)
+      .sort((a, b) => a - b);
+
+    const q1 = msPerPixelValues[Math.floor(msPerPixelValues.length * 0.25)]!;
+    const q3 = msPerPixelValues[Math.floor(msPerPixelValues.length * 0.75)]!;
+    const iqr = q3 - q1;
+    const lowerBound = q1 - 2.0 * iqr;
+    const upperBound = q3 + 2.0 * iqr;
+
+    for (const sample of group) {
+      const mspp = sample.durationMs / sample.pixels;
+      if (mspp >= lowerBound && mspp <= upperBound) {
+        kept.push(sample);
+      }
+    }
+  }
+
+  return kept.length >= 3 ? kept : samples;
 }
 
 function getProjectedActiveSample(activeJob: JobRow | null, snapshot: QueueSnapshot, now: number): TimingSample | null {
@@ -516,6 +595,7 @@ function getProjectedActiveSample(activeJob: JobRow | null, snapshot: QueueSnaps
 
   return {
     source: 'job',
+    model: activeJob.model,
     mode: activeJob.mode,
     pixels,
     aspectRatio: activeJob.width / activeJob.height,
@@ -625,7 +705,12 @@ function getRecencyWeight(sample: TimingSample) {
     : baseWeight * Math.pow(sample.source === 'benchmark' ? 0.96 : 0.93, sample.recencyRank);
 }
 
-function getNeighborWeight(target: EstimationTarget, sample: TimingSample) {
+function getModelFactor(targetModel: string | null, sample: TimingSample): number {
+  if (!targetModel || !sample.model) return 1;
+  return sample.model === targetModel ? 2.5 : 0.15;
+}
+
+function getNeighborWeight(target: EstimationTarget, sample: TimingSample, targetModel: string | null = null) {
   const areaDelta = Math.abs(Math.log(target.pixels / sample.pixels));
   const aspectDelta = Math.abs(Math.log(target.aspectRatio / sample.aspectRatio));
   const stepDelta = getNormalizedDifference(target.steps, sample.steps, 8);
@@ -639,17 +724,19 @@ function getNeighborWeight(target: EstimationTarget, sample: TimingSample) {
     guidanceDelta * 0.2 +
     inputDelta * 0.4;
   const modeFactor = sample.mode === target.mode ? 1.7 : 0.45;
+  const modelFactor = getModelFactor(targetModel, sample);
 
-  return (modeFactor * getRecencyWeight(sample)) / (distance * distance);
+  return (modeFactor * modelFactor * getRecencyWeight(sample)) / (distance * distance);
 }
 
-function getRegressionWeight(target: EstimationTarget, sample: TimingSample) {
+function getRegressionWeight(target: EstimationTarget, sample: TimingSample, targetModel: string | null = null) {
   const areaDelta = Math.abs(Math.log(target.pixels / sample.pixels));
   const aspectDelta = Math.abs(Math.log(target.aspectRatio / sample.aspectRatio));
   const inputDelta = Math.abs(target.inputCount - sample.inputCount);
   const modeFactor = sample.mode === target.mode ? 1.5 : 0.65;
+  const modelFactor = getModelFactor(targetModel, sample);
 
-  return (modeFactor * getRecencyWeight(sample)) / (1 + areaDelta * 1.1 + aspectDelta * 0.4 + inputDelta * 0.25);
+  return (modeFactor * modelFactor * getRecencyWeight(sample)) / (1 + areaDelta * 1.1 + aspectDelta * 0.4 + inputDelta * 0.25);
 }
 
 function getCandidateSamples(target: EstimationTarget, context: FormatJobContext) {
@@ -707,10 +794,10 @@ function getSparseModeAdjustment(target: EstimationTarget, context: FormatJobCon
   return clamp(sameModeMsPerPixel / txt2imgMsPerPixel, defaultAdjustment, defaultAdjustment + 0.9);
 }
 
-function getLocalNeighborEstimateMs(target: EstimationTarget, samples: TimingSample[]) {
+function getLocalNeighborEstimateMs(target: EstimationTarget, samples: TimingSample[], targetModel: string | null) {
   const weightedNeighbors = samples
     .map((sample) => ({
-      weight: getNeighborWeight(target, sample),
+      weight: getNeighborWeight(target, sample, targetModel),
       value: sample.durationMs,
     }))
     .filter((entry) => entry.weight > 0)
@@ -720,7 +807,7 @@ function getLocalNeighborEstimateMs(target: EstimationTarget, samples: TimingSam
   return getWeightedMedian(weightedNeighbors);
 }
 
-function getRegressionEstimateMs(target: EstimationTarget, samples: TimingSample[]) {
+function getRegressionEstimateMs(target: EstimationTarget, samples: TimingSample[], targetModel: string | null) {
   let sumWeight = 0;
   let sumX = 0;
   let sumY = 0;
@@ -729,7 +816,7 @@ function getRegressionEstimateMs(target: EstimationTarget, samples: TimingSample
   let sampleCount = 0;
 
   for (const sample of samples) {
-    const weight = getRegressionWeight(target, sample);
+    const weight = getRegressionWeight(target, sample, targetModel);
     if (weight <= 0) {
       continue;
     }
@@ -770,7 +857,7 @@ function getRegressionEstimateMs(target: EstimationTarget, samples: TimingSample
 
       return {
         value: sample.durationMs / predictedSampleDurationMs,
-        weight: getNeighborWeight(target, sample),
+        weight: getNeighborWeight(target, sample, targetModel),
       };
     })
     .filter((entry): entry is { value: number; weight: number } => entry !== null);
@@ -779,11 +866,11 @@ function getRegressionEstimateMs(target: EstimationTarget, samples: TimingSample
   return Math.round(predictedDurationMs * clamp(correctionFactor, 0.7, 1.35));
 }
 
-function getFallbackEstimateMs(target: EstimationTarget, samples: TimingSample[]) {
+function getFallbackEstimateMs(target: EstimationTarget, samples: TimingSample[], targetModel: string | null) {
   const entries = samples
     .map((sample) => ({
       value: sample.durationMs / sample.pixels,
-      weight: getNeighborWeight(target, sample),
+      weight: getNeighborWeight(target, sample, targetModel),
     }))
     .filter((entry) => entry.weight > 0);
 
@@ -809,9 +896,10 @@ function estimateTargetDurationMs(target: EstimationTarget, context: FormatJobCo
   }
 
   const samples = getCandidateSamples(target, context);
-  const localEstimateMs = getLocalNeighborEstimateMs(target, samples);
-  const regressionEstimateMs = getRegressionEstimateMs(target, samples);
-  const fallbackEstimateMs = getFallbackEstimateMs(target, samples);
+  const tm = context.targetModel;
+  const localEstimateMs = getLocalNeighborEstimateMs(target, samples, tm);
+  const regressionEstimateMs = getRegressionEstimateMs(target, samples, tm);
+  const fallbackEstimateMs = getFallbackEstimateMs(target, samples, tm);
 
   const blendedEstimateMs =
     localEstimateMs != null && regressionEstimateMs != null
@@ -932,7 +1020,7 @@ function estimateRemainingMs(row: JobRow, context: FormatJobContext) {
   return remainingMs > 0 ? remainingMs : null;
 }
 
-function formatJob(row: JobRow, context: FormatJobContext = buildFormatJobContext()) {
+function formatJob(row: JobRow, context: FormatJobContext = buildFormatJobContext({ targetModel: row.model })) {
   const progress = isTerminalStatus(row.status) ? null : getJobProgress(row.id);
   const queuePosition = row.status === 'queued' ? getQueuePosition(row.id, context) : null;
   const estimatedRemainingMs = estimateRemainingMs(row, context);
@@ -946,6 +1034,9 @@ function formatJob(row: JobRow, context: FormatJobContext = buildFormatJobContex
     height: row.height,
     seed: row.seed,
     model: row.model,
+    loraId: row.lora_id,
+    loraName: row.lora_name,
+    loraScale: row.lora_scale,
     steps: row.steps,
     guidance: row.guidance,
     inputPaths: row.input_paths ? JSON.parse(row.input_paths) : null,

@@ -1,0 +1,133 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="90" x2="1460" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171717"/>
+      <stop offset="1" stop-color="#0D0D0D"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171717"/>
+      <stop offset="1" stop-color="#111111"/>
+    </linearGradient>
+    <filter id="shadow" x="82" y="32" width="1436" height="916" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="18"/>
+      <feGaussianBlur stdDeviation="24"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.45 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow" result="shape"/>
+    </filter>
+    <clipPath id="screenClip">
+      <rect x="130" y="80" width="1340" height="820" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1600" height="980" fill="#0B0B0B"/>
+  <rect x="70" y="40" width="1460" height="900" rx="36" fill="url(#bg)"/>
+
+  <g filter="url(#shadow)" clip-path="url(#screenClip)">
+    <rect x="130" y="80" width="1340" height="820" rx="28" fill="#101010"/>
+    <rect x="130" y="80" width="320" height="820" fill="url(#panel)"/>
+    <rect x="458" y="80" width="8" height="820" fill="#2F2F2F"/>
+    <rect x="466" y="80" width="676" height="820" fill="#0F0F0F"/>
+    <rect x="1142" y="80" width="8" height="820" fill="#2F2F2F"/>
+    <rect x="1150" y="80" width="320" height="820" fill="url(#panel)"/>
+
+    <!-- Header -->
+    <text x="160" y="126" fill="#F3F3F3" font-size="22" font-family="Inter, Arial, sans-serif" font-weight="700">Iris Studio</text>
+    <text x="160" y="150" fill="#8E8E8E" font-size="12" font-family="Inter, Arial, sans-serif">Native FLUX workflows on Apple Silicon</text>
+
+    <!-- Mode selector -->
+    <text x="160" y="195" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">MODE</text>
+    <rect x="160" y="210" width="82" height="34" rx="10" fill="#4D79FF"/>
+    <rect x="247" y="210" width="82" height="34" rx="10" fill="#232323"/>
+    <rect x="334" y="210" width="82" height="34" rx="10" fill="#232323"/>
+    <text x="190" y="231" fill="#FFFFFF" font-size="12" font-family="Inter, Arial, sans-serif" font-weight="600">Text</text>
+    <text x="273" y="231" fill="#C9C9C9" font-size="12" font-family="Inter, Arial, sans-serif">Image</text>
+    <text x="360" y="231" fill="#C9C9C9" font-size="12" font-family="Inter, Arial, sans-serif">Multi</text>
+
+    <!-- Prompt -->
+    <text x="160" y="284" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">PROMPT</text>
+    <rect x="160" y="298" width="258" height="80" rx="14" fill="#141414" stroke="#2D2D2D"/>
+    <text x="178" y="324" fill="#F0F0F0" font-size="14" font-family="Inter, Arial, sans-serif">brutalist hillside residence,</text>
+    <text x="178" y="346" fill="#F0F0F0" font-size="14" font-family="Inter, Arial, sans-serif">golden-hour sidelight, polished</text>
+    <text x="178" y="368" fill="#F0F0F0" font-size="14" font-family="Inter, Arial, sans-serif">concrete and steel</text>
+
+    <!-- Center - Progress display -->
+    <rect x="466" y="80" width="676" height="46" fill="#101010"/>
+    <rect x="466" y="126" width="676" height="1" fill="#262626"/>
+
+    <!-- Spinner indicator -->
+    <circle cx="488" cy="103" r="5" fill="#4D79FF" opacity="0.8"/>
+    <text x="504" y="108" fill="#BDBDBD" font-size="12" font-family="Inter, Arial, sans-serif">Denoising · step 2/4</text>
+    <text x="720" y="108" fill="#BDBDBD" font-size="12" font-family="JetBrains Mono, monospace">47%</text>
+
+    <!-- Progress bar top -->
+    <rect x="496" y="140" width="616" height="6" rx="3" fill="#1A1A1A"/>
+    <rect x="496" y="140" width="289" height="6" rx="3" fill="#4D79FF"/>
+
+    <!-- Large percent -->
+    <text x="804" y="380" fill="#F0F0F0" font-size="64" font-family="Inter, Arial, sans-serif" font-weight="700" text-anchor="middle">47%</text>
+
+    <!-- Phase label -->
+    <text x="804" y="325" fill="#EDEDED" font-size="18" font-family="Inter, Arial, sans-serif" font-weight="600" text-anchor="middle">Denoising</text>
+
+    <!-- Step detail -->
+    <text x="804" y="420" fill="#989898" font-size="14" font-family="Inter, Arial, sans-serif" text-anchor="middle">Step 2 of 4 (24/50 blocks)</text>
+
+    <!-- Phase step indicator -->
+    <circle cx="710" cy="470" r="4" fill="#39D07E"/>
+    <text x="722" y="474" fill="#7F7F7F" font-size="12" font-family="Inter, Arial, sans-serif" text-decoration="line-through">Initializing</text>
+
+    <circle cx="710" cy="494" r="4" fill="#39D07E"/>
+    <text x="722" y="498" fill="#7F7F7F" font-size="12" font-family="Inter, Arial, sans-serif" text-decoration="line-through">Loading VAE</text>
+
+    <circle cx="710" cy="518" r="4" fill="#39D07E"/>
+    <text x="722" y="522" fill="#7F7F7F" font-size="12" font-family="Inter, Arial, sans-serif" text-decoration="line-through">Loading text encoders</text>
+
+    <circle cx="710" cy="542" r="4" fill="#39D07E"/>
+    <text x="722" y="546" fill="#7F7F7F" font-size="12" font-family="Inter, Arial, sans-serif" text-decoration="line-through">Encoding prompt</text>
+
+    <circle cx="710" cy="566" r="4" fill="#39D07E"/>
+    <text x="722" y="570" fill="#7F7F7F" font-size="12" font-family="Inter, Arial, sans-serif" text-decoration="line-through">Loading transformer</text>
+
+    <circle cx="710" cy="590" r="4" fill="#4D79FF"/>
+    <text x="722" y="594" fill="#F0F0F0" font-size="12" font-family="Inter, Arial, sans-serif" font-weight="600">Denoising</text>
+
+    <circle cx="710" cy="614" r="4" fill="#3A3A3A"/>
+    <text x="722" y="618" fill="#4A4A4A" font-size="12" font-family="Inter, Arial, sans-serif">Decoding image</text>
+
+    <circle cx="710" cy="638" r="4" fill="#3A3A3A"/>
+    <text x="722" y="642" fill="#4A4A4A" font-size="12" font-family="Inter, Arial, sans-serif">Saving</text>
+
+    <!-- ETA and elapsed -->
+    <text x="764" y="680" fill="#989898" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="middle">ETA 0:08</text>
+    <text x="844" y="680" fill="#989898" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="middle">Elapsed 0:09</text>
+
+    <!-- Bottom prompt bar -->
+    <rect x="466" y="840" width="676" height="60" fill="#101010"/>
+    <rect x="466" y="839" width="676" height="1" fill="#262626"/>
+    <text x="496" y="876" fill="#BEBEBE" font-size="14" font-family="Inter, Arial, sans-serif">brutalist hillside residence, golden-hour sidelight, polished concrete and steel</text>
+
+    <!-- Right panel - Details -->
+    <text x="1178" y="122" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">DETAILS</text>
+    <text x="1178" y="160" fill="#939393" font-size="12" font-family="Inter, Arial, sans-serif">Status</text>
+    <text x="1398" y="160" fill="#4D79FF" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="end">running</text>
+    <text x="1178" y="188" fill="#939393" font-size="12" font-family="Inter, Arial, sans-serif">Size</text>
+    <text x="1398" y="188" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="end">1024 × 1024</text>
+    <text x="1178" y="216" fill="#939393" font-size="12" font-family="Inter, Arial, sans-serif">Model</text>
+    <text x="1398" y="216" fill="#EDEDED" font-size="12" font-family="Inter, Arial, sans-serif" text-anchor="end">FLUX.2 [klein] 9B</text>
+
+    <!-- Progress in details -->
+    <rect x="1178" y="244" width="222" height="72" rx="10" fill="#1A1A2A" stroke="#2A2A3A"/>
+    <text x="1192" y="266" fill="#989898" font-size="11" font-family="Inter, Arial, sans-serif">Denoising</text>
+    <text x="1386" y="266" fill="#EDEDED" font-size="11" font-family="JetBrains Mono, monospace" text-anchor="end">47%</text>
+    <rect x="1192" y="278" width="194" height="6" rx="3" fill="#1A1A1A"/>
+    <rect x="1192" y="278" width="91" height="6" rx="3" fill="#4D79FF"/>
+    <text x="1192" y="302" fill="#989898" font-size="11" font-family="Inter, Arial, sans-serif">Step 2 of 4 · 24/50 blocks</text>
+
+    <!-- History heading -->
+    <rect x="1150" y="340" width="320" height="1" fill="#262626"/>
+    <text x="1178" y="370" fill="#7F7F7F" font-size="11" font-family="Inter, Arial, sans-serif" letter-spacing="1.8">HISTORY</text>
+  </g>
+</svg>

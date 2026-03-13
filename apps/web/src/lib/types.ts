@@ -1,15 +1,28 @@
 export type JobMode = 'txt2img' | 'img2img' | 'multi-ref';
 export type JobStatus = 'queued' | 'running' | 'saving' | 'done' | 'failed' | 'cancelled';
+export type ModelId = 'flux-klein-4b' | 'flux-klein-base-4b' | 'flux-klein-9b' | 'flux-klein-base-9b';
+export type ModelLicense = 'apache-2.0' | 'flux-non-commercial';
+export type ModelVariant = 'distilled' | 'base';
+export type ModelParameterSize = '4B' | '9B';
+export type LocalModelSource = 'directory';
+export type ModelDownloadStatus = 'idle' | 'preparing' | 'downloading' | 'installing' | 'stopping' | 'done' | 'failed' | 'cancelled' | 'paused';
+export type ModelInstallStatus = 'missing' | 'partial' | 'installed';
+export type LoraFormat = 'fal-ai' | 'comfyui' | 'unknown';
+export type LoraFormatConfidence = 'metadata' | 'heuristic' | 'manual' | 'unknown';
+export type LoraTensorDtype = 'bf16' | 'f16' | 'f32' | 'other' | 'mixed' | 'unknown';
 
 export interface Job {
   id: string;
   status: JobStatus;
   mode: JobMode;
   prompt: string;
+  model: ModelId;
+  loraId: string | null;
+  loraName: string | null;
+  loraScale: number | null;
   width: number;
   height: number;
   seed: number | null;
-  model: string;
   steps: number | null;
   guidance: number | null;
   inputPaths: string[] | null;
@@ -27,6 +40,9 @@ export interface Job {
 export interface EditorDraft {
   mode: JobMode;
   prompt: string;
+  model: ModelId;
+  loraId: string | null;
+  loraScale: number | null;
   width: number;
   height: number;
   seed: number | null;
@@ -40,6 +56,8 @@ export interface JobProgress {
   totalSteps: number;
   percent: number;
   phase: string;
+  substep?: number;
+  totalSubsteps?: number;
 }
 
 export interface JobStatusEvent {
@@ -66,6 +84,9 @@ export interface JobListResponse {
 export interface CreateJobRequest {
   mode: JobMode;
   prompt: string;
+  model: ModelId;
+  loraId?: string;
+  loraScale?: number;
   width: number;
   height: number;
   seed?: number;
@@ -76,6 +97,7 @@ export interface CreateJobRequest {
 
 export interface EstimateJobRequest {
   mode: JobMode;
+  model: ModelId;
   width: number;
   height: number;
   steps?: number;
@@ -107,6 +129,7 @@ export interface BenchmarkSample {
 
 export interface BenchmarkRun {
   id: string;
+  model: ModelId | null;
   status: BenchmarkStatus;
   totalCases: number;
   completedCases: number;
@@ -122,6 +145,79 @@ export interface BenchmarkStatusResponse {
   currentRun: BenchmarkRun | null;
   latestRun: BenchmarkRun | null;
   latestUsableRun: BenchmarkRun | null;
+  latestRunsByModel: Partial<Record<ModelId, BenchmarkRun | null>>;
+  latestUsableRunsByModel: Partial<Record<ModelId, BenchmarkRun | null>>;
+}
+
+export interface ModelDownload {
+  status: ModelDownloadStatus;
+  startedAt: string | null;
+  finishedAt: string | null;
+  message: string | null;
+  error: string | null;
+  progressPercent: number | null;
+  speedMBps: number | null;
+  etaSeconds: number | null;
+  logLines: string[];
+}
+
+export interface ModelInfo {
+  id: ModelId;
+  label: string;
+  summary: string;
+  variant: ModelVariant;
+  parameterSize: ModelParameterSize;
+  repoId: string;
+  huggingFaceUrl: string;
+  recommendedSteps: number;
+  recommendedGuidance: number | null;
+  license: ModelLicense;
+  gated: boolean;
+  installDirName: string;
+  installStatus: ModelInstallStatus;
+  installed: boolean;
+  localPath: string | null;
+  localSource: LocalModelSource | null;
+  missingComponents: string[];
+  download: ModelDownload;
+}
+
+export interface ModelsResponse {
+  modelsDir: string;
+  activeDownloadModelId: ModelId | null;
+  hasAnyInstalled: boolean;
+  models: ModelInfo[];
+}
+
+export interface LoraInfo {
+  id: string;
+  filename: string;
+  localPath: string;
+  sizeBytes: number;
+  manualFormat: Exclude<LoraFormat, 'unknown'> | null;
+  manualModelId: ModelId | null;
+  format: LoraFormat;
+  formatConfidence: LoraFormatConfidence;
+  tensorDtype: LoraTensorDtype;
+  tensorCount: number;
+  triggerPhrases: string[];
+  baseModelHint: string | null;
+  detectedBaseModelId: ModelId | null;
+  compatibleModelIds: ModelId[];
+  fileReady: boolean;
+  fileReadyReason: string;
+  runtimeReady: boolean;
+  runtimeReadyReason: string;
+  issues: string[];
+}
+
+export interface LorasResponse {
+  lorasDir: string;
+  runtimeSupport: {
+    canApplyDuringGeneration: boolean;
+    reason: string;
+  };
+  loras: LoraInfo[];
 }
 
 export const SIZE_PRESETS = [
@@ -132,12 +228,4 @@ export const SIZE_PRESETS = [
   { label: '512 × 768', width: 512, height: 768 },
   { label: '1024 × 768', width: 1024, height: 768 },
   { label: '768 × 1024', width: 768, height: 1024 },
-] as const;
-
-export const PROMPT_EXAMPLES = [
-  'editorial portrait, natural skin texture, soft diffused light, medium format photo',
-  'oil painting of a coastal village at golden hour, impressionist brushwork, warm palette',
-  'macro photograph of morning dew on a spider web, bokeh background, natural light',
-  'architectural interior, minimalist concrete space, dramatic shadows, wide angle',
-  'watercolor illustration of a forest path in autumn, loose brushstrokes, muted earth tones',
 ] as const;

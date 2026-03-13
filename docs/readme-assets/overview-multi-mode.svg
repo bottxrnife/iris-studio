@@ -109,7 +109,7 @@
 
     <rect x="536" y="146" width="536" height="620" rx="28" fill="#141414" stroke="#2B2B2B"/>
     <g clip-path="url(#canvasClip)">
-      <g transform="translate(-116 0)">
+      <g transform="translate(-104 0)">
         <rect x="664" y="166" width="512" height="580" fill="url(#outputGrad)"/>
         <rect x="664" y="632" width="512" height="114" fill="#16302F" opacity="0.18"/>
         <path d="M664 472C744 404 838 362 946 348C1038 336 1114 348 1176 378V166H664V472Z" fill="#5C7892" opacity="0.45"/>

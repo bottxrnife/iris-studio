@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Clock, Download, Copy, Maximize2, Square, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Download, Copy, RefreshCw, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { listJobs, getJob, createJob, cancelJob, deleteJob, downloadJobsZip, getThumbUrl, getOutputImageUrl } from '@/lib/api';
 import { formatLiveElapsedTime, formatLiveRemainingTime, useEtaNow } from '@/lib/eta';
+import { getModelDisplayLabel } from '@/lib/model-labels';
 import type { Job, JobProgress, JobStatus } from '@/lib/types';
 
 interface HistoryPanelProps {
@@ -18,7 +19,6 @@ interface HistoryPanelProps {
 }
 
 const HISTORY_PAGE_SIZE = 20;
-const MAX_VISIBLE_PAGE_BUTTONS = 7;
 
 function isTerminalJobStatus(status: JobStatus) {
   return status === 'done' || status === 'failed' || status === 'cancelled';
@@ -84,13 +84,18 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
   }, [data, page, totalPages]);
 
   const rerunMutation = useMutation({
-    mutationFn: (job: Job) =>
+    mutationFn: ({ job, forceSize }: { job: Job; forceSize?: number }) =>
       createJob({
         mode: job.mode,
         prompt: job.prompt,
-        width: 1024,
-        height: 1024,
+        model: job.model,
+        ...(job.loraId ? { loraId: job.loraId, loraScale: job.loraScale ?? 1 } : {}),
+        width: forceSize ?? job.width,
+        height: forceSize ?? job.height,
         seed: job.seed ?? undefined,
+        steps: job.steps ?? undefined,
+        guidance: job.guidance ?? undefined,
+        inputPaths: job.inputPaths ?? undefined,
       }),
     onSuccess: (newJob) => {
       queryClient.invalidateQueries({ queryKey: ['jobs'] });
@@ -188,15 +193,23 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
   const selectedActions = useMemo(() => {
     if (!selectedJob || !selectedStatus) return [];
 
-    if (selectedStatus === 'failed') {
+    if (selectedStatus === 'failed' || selectedStatus === 'cancelled') {
       return [
+        {
+          key: 'restart',
+          label: 'Restart',
+          icon: RotateCcw,
+          onClick: () => rerunMutation.mutate({ job: selectedJob }),
+          disabled: rerunMutation.isPending,
+          title: 'Restart this generation with the same settings',
+        },
         {
           key: 'edit',
           label: 'To Editor',
           icon: Copy,
           onClick: () => onLoadJobToEditor(selectedJob),
           disabled: false,
-          title: 'Load this failed job into the left editor',
+          title: 'Load settings into the editor to adjust before regenerating',
         },
       ];
     }
@@ -207,8 +220,8 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
       {
         key: 'rerun-1024',
         label: '1024',
-        icon: Maximize2,
-        onClick: () => rerunMutation.mutate(selectedJob),
+        icon: RefreshCw,
+        onClick: () => rerunMutation.mutate({ job: selectedJob, forceSize: 1024 }),
         disabled: rerunMutation.isPending,
         title: 'Rerun at 1024×1024 with same seed',
       },
@@ -226,14 +239,10 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
   function handleDeleteSelected() {
     if (!selectedJob || !canDeleteSelected) return;
 
-    const confirmed = window.confirm(
-      selectedStatus === 'done'
-        ? 'Delete this generated image and remove it from history?'
-        : selectedStatus === 'cancelled'
-          ? 'Delete this stopped job from history?'
-          : 'Delete this failed generation from history?'
-    );
-    if (!confirmed) return;
+    if (selectedStatus === 'done') {
+      const confirmed = window.confirm('Delete this generated image and remove it from history?');
+      if (!confirmed) return;
+    }
 
     deleteMutation.mutate(selectedJob.id);
   }
@@ -257,6 +266,10 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
         ? current.filter((id) => id !== jobId)
         : [...current, jobId]
     ));
+  }
+
+  function handleJobClick(jobId: string) {
+    onSelectJob(jobId === activeJobId ? null : jobId);
   }
 
   function toggleSelectAllJobs() {
@@ -290,21 +303,60 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
     bulkDownloadMutation.mutate(selectedDownloadableJobIds);
   }
 
-  const visiblePageButtons = useMemo(() => {
-    if (totalPages <= MAX_VISIBLE_PAGE_BUTTONS) {
-      return Array.from({ length: totalPages }, (_, index) => index);
+  const paginationRef = useRef<HTMLDivElement>(null);
+  const [paginationWidth, setPaginationWidth] = useState(0);
+
+  useEffect(() => {
+    const el = paginationRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setPaginationWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const visiblePages = useMemo(() => {
+    if (totalPages <= 1) return [0];
+
+    const BUTTON_WIDTH = 36;
+    const GAP = 4;
+    const ARROW_SPACE = (BUTTON_WIDTH + GAP) * 2;
+    const available = Math.max(0, paginationWidth - ARROW_SPACE);
+    const maxSlots = Math.max(3, Math.floor(available / (BUTTON_WIDTH + GAP)));
+
+    if (totalPages <= maxSlots) {
+      return Array.from({ length: totalPages }, (_, i) => i);
     }
 
-    const halfWindow = Math.floor(MAX_VISIBLE_PAGE_BUTTONS / 2);
-    let start = Math.max(0, page - halfWindow);
-    let end = Math.min(totalPages - 1, start + MAX_VISIBLE_PAGE_BUTTONS - 1);
+    const slots: (number | 'ellipsis-start' | 'ellipsis-end')[] = [];
+    const sideCount = Math.floor((maxSlots - 3) / 2);
 
-    if (end - start + 1 < MAX_VISIBLE_PAGE_BUTTONS) {
-      start = Math.max(0, end - MAX_VISIBLE_PAGE_BUTTONS + 1);
+    slots.push(0);
+
+    let startPage = Math.max(1, page - sideCount);
+    let endPage = Math.min(totalPages - 2, page + sideCount);
+
+    if (startPage <= 1) {
+      endPage = Math.min(totalPages - 2, maxSlots - 2);
+      startPage = 1;
+    }
+    if (endPage >= totalPages - 2) {
+      startPage = Math.max(1, totalPages - maxSlots + 1);
+      endPage = totalPages - 2;
     }
 
-    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
-  }, [page, totalPages]);
+    if (startPage > 1) slots.push('ellipsis-start');
+    for (let i = startPage; i <= endPage; i++) slots.push(i);
+    if (endPage < totalPages - 2) slots.push('ellipsis-end');
+
+    slots.push(totalPages - 1);
+
+    return slots;
+  }, [totalPages, page, paginationWidth]);
 
   useEffect(() => {
     async function handleArrowNavigation(event: KeyboardEvent) {
@@ -372,10 +424,10 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
   }, [activeJobId, jobs, onSelectJob, page, queryClient, totalPages]);
 
   return (
-    <div className="flex h-full w-full min-w-0 flex-col overflow-x-hidden border-l border-border bg-card">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden border-l border-border bg-card">
       {/* Detail panel for selected job */}
       {selectedJob && (
-        <div className="p-4 border-b border-border space-y-3">
+        <div className="shrink-0 border-b border-border p-4 space-y-3">
           <h3 className="text-xs text-muted-foreground uppercase tracking-wider">Details</h3>
 
           <div className="space-y-2 text-xs">
@@ -397,8 +449,17 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
             )}
             <div className="flex justify-between">
               <span className="text-muted-foreground">Model</span>
-              <span>{selectedJob.model}</span>
+              <span>{getModelDisplayLabel(selectedJob.model)}</span>
             </div>
+            {selectedJob.loraName && (
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">LoRA</span>
+                <span className="truncate text-right" title={selectedJob.loraName}>
+                  {selectedJob.loraName}
+                  {selectedJob.loraScale != null ? ` (${selectedJob.loraScale.toFixed(2)})` : ''}
+                </span>
+              </div>
+            )}
             {selectedElapsed && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Elapsed</span>
@@ -454,6 +515,9 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
               {selectedProgress?.totalSteps ? (
                 <p className="text-[11px] text-muted-foreground">
                   Step {selectedProgress.step} of {selectedProgress.totalSteps}
+                  {selectedProgress.phase === 'Denoising' && selectedProgress.substep != null && selectedProgress.totalSubsteps != null && selectedProgress.totalSubsteps > 0
+                    ? ` · ${selectedProgress.substep}/${selectedProgress.totalSubsteps} blocks`
+                    : ''}
                 </p>
               ) : null}
               {selectedEta && (
@@ -549,66 +613,67 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
         </div>
       )}
 
-      {/* History list */}
-      <div className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto">
-        <div className="sticky top-0 z-10 border-b border-border bg-card/95 px-4 py-3 backdrop-blur">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              History
-            </h3>
-            {selectedCount > 0 && (
-              <span className="text-[11px] text-muted-foreground">
-                {selectedCount} selected
-              </span>
-            )}
-          </div>
-          {deletableJobIds.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-[11px]"
-                onClick={toggleSelectAllJobs}
-                disabled={bulkDeleteMutation.isPending || bulkDownloadMutation.isPending}
-              >
-                {allDeletableSelected ? 'Clear all' : 'Select all'}
-              </Button>
-              {selectedCount > 0 && (
-                <>
-                  {selectedDownloadableCount > 0 && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="h-7 px-2 text-[11px]"
-                      onClick={handleBulkDownload}
-                      disabled={bulkDownloadMutation.isPending || bulkDeleteMutation.isPending || deleteMutation.isPending || stopMutation.isPending}
-                    >
-                      <Download className="h-3 w-3 mr-1" />
-                      {bulkDownloadButtonLabel}
-                    </Button>
-                  )}
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="h-7 px-2 text-[11px]"
-                    onClick={handleBulkDelete}
-                    disabled={bulkDeleteMutation.isPending || bulkDownloadMutation.isPending || deleteMutation.isPending || stopMutation.isPending}
-                  >
-                    <Trash2 className="h-3 w-3 mr-1" />
-                    {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete'}
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
-          {selectedCount > 0 && bulkDownloadError && (
-            <p className="mt-2 text-xs text-destructive">{bulkDownloadError}</p>
-          )}
-          {selectedCount > 0 && bulkDeleteError && (
-            <p className="mt-2 text-xs text-destructive">{bulkDeleteError}</p>
+      <div className="shrink-0 border-b border-border bg-card px-4 py-3">
+        <div className="flex items-center justify-between">
+          <h3 className="flex items-center gap-1 text-xs uppercase tracking-wider text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            History
+          </h3>
+          {selectedCount > 0 && (
+            <span className="text-[11px] text-muted-foreground">
+              {selectedCount} selected
+            </span>
           )}
         </div>
+        {deletableJobIds.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              onClick={toggleSelectAllJobs}
+              disabled={bulkDeleteMutation.isPending || bulkDownloadMutation.isPending}
+            >
+              {allDeletableSelected ? 'Clear all' : 'Select all'}
+            </Button>
+            {selectedCount > 0 && (
+              <>
+                {selectedDownloadableCount > 0 && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={handleBulkDownload}
+                    disabled={bulkDownloadMutation.isPending || bulkDeleteMutation.isPending || deleteMutation.isPending || stopMutation.isPending}
+                  >
+                    <Download className="mr-1 h-3 w-3" />
+                    {bulkDownloadButtonLabel}
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleteMutation.isPending || bulkDownloadMutation.isPending || deleteMutation.isPending || stopMutation.isPending}
+                >
+                  <Trash2 className="mr-1 h-3 w-3" />
+                  {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete'}
+                </Button>
+              </>
+            )}
+          </div>
+        )}
+        {selectedCount > 0 && bulkDownloadError && (
+          <p className="mt-2 text-xs text-destructive">{bulkDownloadError}</p>
+        )}
+        {selectedCount > 0 && bulkDeleteError && (
+          <p className="mt-2 text-xs text-destructive">{bulkDeleteError}</p>
+        )}
+      </div>
+
+      {/* History list */}
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
 
         {isLoading && (
           <div className="p-4 text-xs text-muted-foreground">Loading...</div>
@@ -632,7 +697,7 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
 
         {jobs.length === 0 && !isLoading && !isError && (
           <div className="p-4 text-xs text-muted-foreground">
-            No generations yet. Create your first image!
+            Your generated images will appear here.
           </div>
         )}
 
@@ -668,7 +733,7 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
                   </div>
 
                   <button
-                    onClick={() => onSelectJob(job.id)}
+                    onClick={() => handleJobClick(job.id)}
                     className="flex min-w-0 flex-1 gap-2 text-left"
                   >
                     {/* Thumbnail */}
@@ -729,85 +794,62 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
           })}
         </div>
 
-        {totalPages > 1 && (
-          <div className="border-t border-border px-4 py-3">
-            <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-              <span>
-                Page {page + 1} of {totalPages}
-              </span>
-              <span>
-                {totalJobs} image{totalJobs === 1 ? '' : 's'}
-              </span>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-[11px]"
-                type="button"
-                onClick={() => setPage((current) => Math.max(0, current - 1))}
-                disabled={page === 0}
-              >
-                Prev
-              </Button>
-              {visiblePageButtons[0] !== 0 && (
-                <>
-                  <Button
-                    variant={page === 0 ? 'default' : 'secondary'}
-                    size="sm"
-                    className="h-7 min-w-7 px-2 text-[11px]"
-                    type="button"
-                    onClick={() => setPage(0)}
-                  >
-                    1
-                  </Button>
-                  {visiblePageButtons[0] > 1 && (
-                    <span className="px-1 text-[11px] text-muted-foreground">...</span>
-                  )}
-                </>
-              )}
-              {visiblePageButtons.map((pageIndex) => (
-                <Button
-                  key={pageIndex}
-                  variant={page === pageIndex ? 'default' : 'secondary'}
-                  size="sm"
-                  className="h-7 min-w-7 px-2 text-[11px]"
-                  type="button"
-                  onClick={() => setPage(pageIndex)}
-                >
-                  {pageIndex + 1}
-                </Button>
-              ))}
-              {visiblePageButtons[visiblePageButtons.length - 1] !== totalPages - 1 && (
-                <>
-                  {visiblePageButtons[visiblePageButtons.length - 1] < totalPages - 2 && (
-                    <span className="px-1 text-[11px] text-muted-foreground">...</span>
-                  )}
-                  <Button
-                    variant={page === totalPages - 1 ? 'default' : 'secondary'}
-                    size="sm"
-                    className="h-7 min-w-7 px-2 text-[11px]"
-                    type="button"
-                    onClick={() => setPage(totalPages - 1)}
-                  >
-                    {totalPages}
-                  </Button>
-                </>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-[11px]"
-                type="button"
-                onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))}
-                disabled={page >= totalPages - 1}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
+
+      {totalPages > 1 && (
+        <div ref={paginationRef} className="shrink-0 overflow-hidden border-t border-border bg-card/95 px-3 py-2.5 backdrop-blur">
+          <div className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted-foreground mb-2">
+            <span className="truncate">
+              {totalJobs} image{totalJobs === 1 ? '' : 's'}
+            </span>
+            <span className="shrink-0 tabular-nums">
+              {page + 1} / {totalPages}
+            </span>
+          </div>
+          <div className="flex items-center justify-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              type="button"
+              onClick={() => setPage((current) => Math.max(0, current - 1))}
+              disabled={page === 0}
+              aria-label="Previous page"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            {visiblePages.map((slot, i) =>
+              typeof slot === 'string' ? (
+                <span key={slot} className="px-1 text-[11px] text-muted-foreground/50 select-none">
+                  …
+                </span>
+              ) : (
+                <Button
+                  key={slot}
+                  variant={page === slot ? 'default' : 'ghost'}
+                  size="sm"
+                  className="h-8 min-w-8 shrink-0 rounded-md px-2 text-[11px] tabular-nums"
+                  type="button"
+                  onClick={() => setPage(slot)}
+                >
+                  {slot + 1}
+                </Button>
+              )
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              type="button"
+              onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))}
+              disabled={page >= totalPages - 1}
+              aria-label="Next page"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

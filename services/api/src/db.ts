@@ -20,6 +20,9 @@ db.exec(`
     height INTEGER NOT NULL,
     seed INTEGER,
     model TEXT NOT NULL,
+    lora_id TEXT,
+    lora_name TEXT,
+    lora_scale REAL,
     steps INTEGER,
     guidance REAL,
     input_paths TEXT,
@@ -37,6 +40,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS benchmark_runs (
     id TEXT PRIMARY KEY,
+    model TEXT,
     status TEXT NOT NULL DEFAULT 'running',
     total_cases INTEGER NOT NULL,
     completed_cases INTEGER NOT NULL DEFAULT 0,
@@ -64,6 +68,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_benchmark_samples_run_id ON benchmark_samples(run_id, created_at ASC);
 `);
 
+function ensureColumn(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (columns.some((entry) => entry.name === column)) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+}
+
+ensureColumn('jobs', 'lora_id', 'lora_id TEXT');
+ensureColumn('jobs', 'lora_name', 'lora_name TEXT');
+ensureColumn('jobs', 'lora_scale', 'lora_scale REAL');
+ensureColumn('benchmark_runs', 'model', 'model TEXT');
+
 export interface JobRow {
   id: string;
   status: string;
@@ -73,6 +91,9 @@ export interface JobRow {
   height: number;
   seed: number | null;
   model: string;
+  lora_id: string | null;
+  lora_name: string | null;
+  lora_scale: number | null;
   steps: number | null;
   guidance: number | null;
   input_paths: string | null;
@@ -87,6 +108,7 @@ export interface JobRow {
 
 export interface BenchmarkRunRow {
   id: string;
+  model: string | null;
   status: string;
   total_cases: number;
   completed_cases: number;
@@ -109,12 +131,23 @@ export interface BenchmarkSampleRow {
 }
 
 interface JobStatements {
-  insertJob: Database.Statement<[string, string, string, number, number, string, number | null, number | null, string | null]>;
+  insertJob: Database.Statement<[string, string, string, number, number, string, string | null, string | null, number | null, number | null, number | null, string | null]>;
   getJob: Database.Statement<[string], JobRow>;
   listJobs: Database.Statement<[number, number], JobRow>;
   listRecoverableJobs: Database.Statement<[], JobRow>;
   listRecentCompletedTimingSamples: Database.Statement<[number], {
     mode: string;
+    model: string;
+    width: number;
+    height: number;
+    steps: number | null;
+    guidance: number | null;
+    input_paths: string | null;
+    duration_ms: number;
+  }>;
+  listRecentCompletedTimingSamplesByModel: Database.Statement<[string, number], {
+    mode: string;
+    model: string;
     width: number;
     height: number;
     steps: number | null;
@@ -126,15 +159,17 @@ interface JobStatements {
   deleteJob: Database.Statement<[string]>;
   updateJobStatus: Database.Statement<[string, string]>;
   updateJobResult: Database.Statement<[string, number | null, string | null, string | null, number | null, string | null, string | null, string]>;
-  insertBenchmarkRun: Database.Statement<[string, number, string | null]>;
+  insertBenchmarkRun: Database.Statement<[string, string, number, string | null]>;
   getBenchmarkRun: Database.Statement<[string], BenchmarkRunRow>;
   getRunningBenchmarkRun: Database.Statement<[], BenchmarkRunRow>;
   getLatestBenchmarkRun: Database.Statement<[], BenchmarkRunRow>;
   getLatestFinishedBenchmarkRun: Database.Statement<[], BenchmarkRunRow>;
   getLatestFinishedBenchmarkRunWithSamples: Database.Statement<[], BenchmarkRunRow>;
+  getLatestFinishedBenchmarkRunByModel: Database.Statement<[string], BenchmarkRunRow>;
+  getLatestFinishedBenchmarkRunWithSamplesByModel: Database.Statement<[string], BenchmarkRunRow>;
   getLatestCompletedBenchmarkRun: Database.Statement<[], BenchmarkRunRow>;
   listBenchmarkSamplesByRun: Database.Statement<[string], BenchmarkSampleRow>;
-  listLatestBenchmarkTimingSamples: Database.Statement<[number], {
+  listLatestBenchmarkTimingSamples: Database.Statement<[string, number], {
     mode: string;
     width: number;
     height: number;
@@ -149,9 +184,9 @@ interface JobStatements {
 }
 
 export const queries: JobStatements = {
-  insertJob: db.prepare<[string, string, string, number, number, string, number | null, number | null, string | null]>(
-    `INSERT INTO jobs (id, mode, prompt, width, height, model, steps, guidance, input_paths)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  insertJob: db.prepare<[string, string, string, number, number, string, string | null, string | null, number | null, number | null, number | null, string | null]>(
+    `INSERT INTO jobs (id, mode, prompt, width, height, model, lora_id, lora_name, lora_scale, steps, guidance, input_paths)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ),
 
   getJob: db.prepare<[string], JobRow>(
@@ -170,6 +205,7 @@ export const queries: JobStatements = {
 
   listRecentCompletedTimingSamples: db.prepare<[number], {
     mode: string;
+    model: string;
     width: number;
     height: number;
     steps: number | null;
@@ -177,12 +213,33 @@ export const queries: JobStatements = {
     input_paths: string | null;
     duration_ms: number;
   }>(
-    `SELECT mode, width, height, steps, guidance, input_paths, duration_ms
+    `SELECT mode, model, width, height, steps, guidance, input_paths, duration_ms
      FROM jobs
      WHERE status = 'done'
        AND duration_ms IS NOT NULL
        AND width > 0
        AND height > 0
+     ORDER BY updated_at DESC
+     LIMIT ?`
+  ),
+
+  listRecentCompletedTimingSamplesByModel: db.prepare<[string, number], {
+    mode: string;
+    model: string;
+    width: number;
+    height: number;
+    steps: number | null;
+    guidance: number | null;
+    input_paths: string | null;
+    duration_ms: number;
+  }>(
+    `SELECT mode, model, width, height, steps, guidance, input_paths, duration_ms
+     FROM jobs
+     WHERE status = 'done'
+       AND duration_ms IS NOT NULL
+       AND width > 0
+       AND height > 0
+       AND model = ?
      ORDER BY updated_at DESC
      LIMIT ?`
   ),
@@ -212,9 +269,9 @@ export const queries: JobStatements = {
      WHERE id = ?`
   ),
 
-  insertBenchmarkRun: db.prepare<[string, number, string | null]>(
-    `INSERT INTO benchmark_runs (id, total_cases, current_case_label)
-     VALUES (?, ?, ?)`
+  insertBenchmarkRun: db.prepare<[string, string, number, string | null]>(
+    `INSERT INTO benchmark_runs (id, model, total_cases, current_case_label)
+     VALUES (?, ?, ?, ?)`
   ),
 
   getBenchmarkRun: db.prepare<[string], BenchmarkRunRow>(
@@ -254,6 +311,29 @@ export const queries: JobStatements = {
      LIMIT 1`
   ),
 
+  getLatestFinishedBenchmarkRunByModel: db.prepare<[string], BenchmarkRunRow>(
+    `SELECT *
+     FROM benchmark_runs
+     WHERE status != 'running'
+       AND model = ?
+     ORDER BY COALESCE(finished_at, started_at) DESC, started_at DESC
+     LIMIT 1`
+  ),
+
+  getLatestFinishedBenchmarkRunWithSamplesByModel: db.prepare<[string], BenchmarkRunRow>(
+    `SELECT r.*
+     FROM benchmark_runs r
+     WHERE r.status != 'running'
+       AND r.model = ?
+       AND EXISTS (
+         SELECT 1
+         FROM benchmark_samples s
+         WHERE s.run_id = r.id
+       )
+     ORDER BY COALESCE(r.finished_at, r.started_at) DESC, r.started_at DESC
+     LIMIT 1`
+  ),
+
   getLatestCompletedBenchmarkRun: db.prepare<[], BenchmarkRunRow>(
     `SELECT * FROM benchmark_runs
      WHERE status = 'done'
@@ -267,7 +347,7 @@ export const queries: JobStatements = {
      ORDER BY created_at ASC`
   ),
 
-  listLatestBenchmarkTimingSamples: db.prepare<[number], {
+  listLatestBenchmarkTimingSamples: db.prepare<[string, number], {
     mode: string;
     width: number;
     height: number;
@@ -288,6 +368,7 @@ export const queries: JobStatements = {
        FROM benchmark_samples s
        JOIN benchmark_runs r ON r.id = s.run_id
        WHERE r.status IN ('done', 'cancelled')
+         AND r.model = ?
      )
      SELECT mode, width, height, input_count, duration_ms
      FROM ranked_samples

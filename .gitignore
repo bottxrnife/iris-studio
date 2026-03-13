@@ -9,7 +9,10 @@ storage/outputs/
 storage/thumbs/
 storage/app.db
 vendor/iris.c/
-models/
+Models/*
+!Models/README.md
+Loras/*
+!Loras/README.md
 *.log
 .env
 .env.local

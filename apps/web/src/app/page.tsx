@@ -45,6 +45,9 @@ export default function Home() {
     setEditorDraft({
       mode: job.mode,
       prompt: job.prompt,
+      model: job.model,
+      loraId: job.loraId,
+      loraScale: job.loraScale,
       width: job.width,
       height: job.height,
       seed: job.seed,
@@ -144,7 +147,7 @@ export default function Home() {
   }, [draggingSide]);
 
   return (
-    <main ref={containerRef} className="flex h-screen overflow-hidden">
+    <main ref={containerRef} className="flex h-full min-h-0 overflow-hidden">
       <div
         className="h-full shrink-0"
         style={{ width: leftPaneWidth }}

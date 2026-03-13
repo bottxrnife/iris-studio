@@ -111,7 +111,7 @@
 
     <rect x="536" y="146" width="536" height="620" rx="28" fill="#141414" stroke="#2B2B2B"/>
     <g clip-path="url(#canvasClip)">
-      <g transform="translate(-116 0)">
+      <g transform="translate(-104 0)">
         <rect x="664" y="166" width="512" height="580" fill="url(#portraitSky)"/>
         <ellipse cx="1010" cy="284" rx="154" ry="228" fill="url(#portraitLight)"/>
         <ellipse cx="924" cy="372" rx="132" ry="178" fill="#3A2430"/>

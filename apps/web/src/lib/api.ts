@@ -9,6 +9,10 @@ import type {
   JobStatusEvent,
   JobStreamEvent,
   JobProgress,
+  ModelsResponse,
+  LorasResponse,
+  LoraInfo,
+  LoraFormat,
 } from './types';
 
 const DEFAULT_SERVER_API_ORIGIN = 'http://127.0.0.1:8787';
@@ -52,10 +56,125 @@ export async function getBenchmarkStatus(): Promise<BenchmarkStatusResponse> {
   }
 }
 
-export async function startBenchmark(): Promise<BenchmarkRun> {
+export async function getModels(): Promise<ModelsResponse> {
+  try {
+    const res = await fetch(`${getApiBase()}/models`);
+    if (!res.ok) {
+      await handleJsonError(res, 'Failed to load models');
+    }
+    return res.json();
+  } catch (error) {
+    throw toFetchError(error, 'Failed to load models');
+  }
+}
+
+export async function getLoras(): Promise<LorasResponse> {
+  try {
+    const res = await fetch(`${getApiBase()}/loras`);
+    if (!res.ok) {
+      await handleJsonError(res, 'Failed to load LoRAs');
+    }
+    return res.json();
+  } catch (error) {
+    throw toFetchError(error, 'Failed to load LoRAs');
+  }
+}
+
+export async function downloadModel(modelId: string, token?: string): Promise<void> {
+  try {
+    const res = await fetch(`${getApiBase()}/models/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        modelId,
+        ...(token ? { token } : {}),
+      }),
+    });
+
+    if (!res.ok) {
+      await handleJsonError(res, 'Model download failed');
+    }
+  } catch (error) {
+    throw toFetchError(error, 'Failed to start model download');
+  }
+}
+
+export async function cancelModelDownload(modelId: string, mode: 'pause' | 'stop' = 'pause'): Promise<void> {
+  try {
+    const res = await fetch(`${getApiBase()}/models/${modelId}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+
+    if (!res.ok) {
+      await handleJsonError(res, 'Could not cancel model download');
+    }
+  } catch (error) {
+    throw toFetchError(error, 'Failed to cancel model download');
+  }
+}
+
+export async function uploadLoras(files: File[]): Promise<LoraInfo[]> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append('file', file);
+  }
+
+  try {
+    const directBase = `${DEFAULT_SERVER_API_ORIGIN}/api`;
+    const res = await fetch(`${directBase}/loras/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      await handleJsonError(res, 'LoRA upload failed');
+    }
+    const data = await res.json();
+    return data.uploaded as LoraInfo[];
+  } catch (error) {
+    throw toFetchError(error, 'Failed to upload LoRA');
+  }
+}
+
+export async function deleteLora(id: string): Promise<void> {
+  try {
+    const res = await fetch(`${getApiBase()}/loras/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      await handleJsonError(res, 'Delete failed');
+    }
+  } catch (error) {
+    throw toFetchError(error, 'Failed to delete LoRA');
+  }
+}
+
+export async function updateLoraSettings(
+  id: string,
+  data: { format: Exclude<LoraFormat, 'unknown'> | null; modelId: string | null }
+): Promise<LoraInfo> {
+  try {
+    const res = await fetch(`${getApiBase()}/loras/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      await handleJsonError(res, 'Update failed');
+    }
+    return res.json();
+  } catch (error) {
+    throw toFetchError(error, 'Failed to update LoRA settings');
+  }
+}
+
+export async function startBenchmark(model?: string): Promise<BenchmarkRun> {
   try {
     const res = await fetch(`${getApiBase()}/benchmark/run`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(model ? { model } : {}),
     });
 
     if (!res.ok) {
