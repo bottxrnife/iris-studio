@@ -21,7 +21,7 @@ function multipleOf16(label: string) {
 export const createJobSchema = z.object({
   mode: z.enum(['txt2img', 'img2img', 'multi-ref']).default('txt2img'),
   prompt: z.string().min(1, 'Prompt is required').max(4096),
-  model: z.enum(['flux-klein-4b', 'flux-klein-base-4b', 'flux-klein-9b', 'flux-klein-base-9b']).optional(),
+  model: z.enum(['flux-klein-4b', 'flux-klein-base-4b', 'flux-klein-9b', 'flux-klein-base-9b', 'zimage-turbo-6b']).optional(),
   loraId: z.string().min(1).max(255).optional(),
   loraScale: z.number().min(0).max(2).optional(),
   width: multipleOf16('width').default(512),
@@ -36,7 +36,7 @@ export type CreateJobInput = z.infer<typeof createJobSchema>;
 
 export const estimateJobSchema = z.object({
   mode: z.enum(['txt2img', 'img2img', 'multi-ref']).default('txt2img'),
-  model: z.enum(['flux-klein-4b', 'flux-klein-base-4b', 'flux-klein-9b', 'flux-klein-base-9b']).optional(),
+  model: z.enum(['flux-klein-4b', 'flux-klein-base-4b', 'flux-klein-9b', 'flux-klein-base-9b', 'zimage-turbo-6b']).optional(),
   width: multipleOf16('width').default(512),
   height: multipleOf16('height').default(512),
   steps: z.number().int().min(1).max(100).optional(),

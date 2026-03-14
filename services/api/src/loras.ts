@@ -48,14 +48,15 @@ interface SafetensorsHeader {
 const LORAS_README_PATH = path.join(config.irisLoraDir, 'README.md');
 const LORA_OVERRIDES_PATH = path.join(config.irisLoraDir, '.iris-lora-overrides.json');
 const MAX_HEADER_BYTES = 16 * 1024 * 1024;
-const RUNTIME_READY_REASON = 'Ready for native local FLUX generation.';
-const RUNTIME_BLOCK_REASON = 'This LoRA is cataloged, but it is not ready for native local FLUX generation.';
+const RUNTIME_READY_REASON = 'Ready for native local generation.';
+const RUNTIME_BLOCK_REASON = 'This LoRA is cataloged, but it is not ready for native local generation.';
 
 const SUPPORTED_MODEL_PATTERNS: Array<{ id: ModelId; tokens: string[] }> = [
   { id: 'flux-klein-base-9b', tokens: ['flux', 'klein', 'base', '9b'] },
   { id: 'flux-klein-9b', tokens: ['flux', 'klein', '9b'] },
   { id: 'flux-klein-base-4b', tokens: ['flux', 'klein', 'base', '4b'] },
   { id: 'flux-klein-4b', tokens: ['flux', 'klein', '4b'] },
+  { id: 'zimage-turbo-6b', tokens: ['z', 'image', 'turbo'] },
 ];
 
 interface SerializedLoraOverrides {
@@ -216,7 +217,12 @@ function detectFormat(
   return { format: 'unknown', confidence: 'unknown' };
 }
 
-const ALL_FLUX_KLEIN_MODEL_IDS = SUPPORTED_MODEL_PATTERNS.map((pattern) => pattern.id);
+const ALL_FLUX_KLEIN_MODEL_IDS: ModelId[] = [
+  'flux-klein-base-9b',
+  'flux-klein-9b',
+  'flux-klein-base-4b',
+  'flux-klein-4b',
+];
 
 const BROAD_FLUX_TOKENS = [
   ['flux', '1', 'dev'],

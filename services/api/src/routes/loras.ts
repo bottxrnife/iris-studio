@@ -16,7 +16,7 @@ import { isSupportedModelId } from '../models.js';
 
 const updateLoraOverrideSchema = z.object({
   format: z.enum(['fal-ai', 'comfyui']).nullable().optional(),
-  modelId: z.enum(['flux-klein-4b', 'flux-klein-base-4b', 'flux-klein-9b', 'flux-klein-base-9b']).nullable().optional(),
+  modelId: z.enum(['flux-klein-4b', 'flux-klein-base-4b', 'flux-klein-9b', 'flux-klein-base-9b', 'zimage-turbo-6b']).nullable().optional(),
 });
 
 export async function loraRoutes(app: FastifyInstance) {

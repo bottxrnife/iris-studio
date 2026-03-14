@@ -8,7 +8,8 @@ export type ModelId =
   | 'flux-klein-4b'
   | 'flux-klein-base-4b'
   | 'flux-klein-9b'
-  | 'flux-klein-base-9b';
+  | 'flux-klein-base-9b'
+  | 'zimage-turbo-6b';
 
 export type ModelLicense = 'apache-2.0' | 'flux-non-commercial';
 export type LocalModelSource = 'directory';
@@ -20,8 +21,8 @@ export interface SupportedModel {
   id: ModelId;
   label: string;
   summary: string;
-  variant: 'distilled' | 'base';
-  parameterSize: '4B' | '9B';
+  variant: 'distilled' | 'base' | 'turbo';
+  parameterSize: '4B' | '6B' | '9B';
   repoId: string;
   huggingFaceUrl: string;
   recommendedSteps: number;
@@ -121,6 +122,20 @@ export const SUPPORTED_MODELS: SupportedModel[] = [
     license: 'flux-non-commercial',
     gated: true,
     installDirName: 'flux-klein-9b-base',
+  },
+  {
+    id: 'zimage-turbo-6b',
+    label: 'Z-Image Turbo 6B',
+    summary: '8 NFE (9 steps), guidance 0.0. Fast S3-DiT architecture. Apache 2.0 license.',
+    variant: 'turbo',
+    parameterSize: '6B',
+    repoId: 'Tongyi-MAI/Z-Image-Turbo',
+    huggingFaceUrl: 'https://huggingface.co/Tongyi-MAI/Z-Image-Turbo',
+    recommendedSteps: 9,
+    recommendedGuidance: 0,
+    license: 'apache-2.0',
+    gated: false,
+    installDirName: 'zimage-turbo',
   },
 ] as const;
 

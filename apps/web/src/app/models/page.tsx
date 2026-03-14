@@ -81,6 +81,7 @@ const MEMORY_REQUIREMENTS: Record<ModelId, { minimum: string; recommended: strin
   'flux-klein-base-4b': { minimum: '16 GB', recommended: '24 GB' },
   'flux-klein-9b': { minimum: '24 GB', recommended: '36 GB' },
   'flux-klein-base-9b': { minimum: '24 GB', recommended: '48 GB' },
+  'zimage-turbo-6b': { minimum: '16 GB', recommended: '24 GB' },
 };
 
 export default function ModelsPage() {

@@ -1,9 +1,9 @@
 export type JobMode = 'txt2img' | 'img2img' | 'multi-ref';
 export type JobStatus = 'queued' | 'running' | 'saving' | 'done' | 'failed' | 'cancelled';
-export type ModelId = 'flux-klein-4b' | 'flux-klein-base-4b' | 'flux-klein-9b' | 'flux-klein-base-9b';
+export type ModelId = 'flux-klein-4b' | 'flux-klein-base-4b' | 'flux-klein-9b' | 'flux-klein-base-9b' | 'zimage-turbo-6b';
 export type ModelLicense = 'apache-2.0' | 'flux-non-commercial';
-export type ModelVariant = 'distilled' | 'base';
-export type ModelParameterSize = '4B' | '9B';
+export type ModelVariant = 'distilled' | 'base' | 'turbo';
+export type ModelParameterSize = '4B' | '6B' | '9B';
 export type LocalModelSource = 'directory';
 export type ModelDownloadStatus = 'idle' | 'preparing' | 'downloading' | 'installing' | 'stopping' | 'done' | 'failed' | 'cancelled' | 'paused';
 export type ModelInstallStatus = 'missing' | 'partial' | 'installed';

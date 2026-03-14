@@ -127,7 +127,7 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
   const [selectedModel, setSelectedModel] = useState<ModelId>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('iris-selected-model');
-      if (stored === 'flux-klein-4b' || stored === 'flux-klein-base-4b' || stored === 'flux-klein-9b' || stored === 'flux-klein-base-9b') {
+      if (stored === 'flux-klein-4b' || stored === 'flux-klein-base-4b' || stored === 'flux-klein-9b' || stored === 'flux-klein-base-9b' || stored === 'zimage-turbo-6b') {
         return stored;
       }
     }
