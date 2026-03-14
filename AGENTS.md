@@ -14,6 +14,7 @@ This file is a durable handoff for AI coding agents. It documents what the proje
 - The backend should initially wrap the iris CLI. Do not invent unsupported inference parameters.
 - Width and height must be multiples of 16 and capped at 1792.
 - For FLUX distilled defaults, use auto steps, auto guidance, default schedule, and mmap.
+- For Z-Image Turbo defaults, use 9 steps and 0 guidance.
 - Run one generation job at a time by default.
 - Persist job metadata: prompt, seed, size, model, timings, output path, and thumbnail path.
 - Capture the seed from iris stderr and/or PNG metadata.
@@ -27,7 +28,8 @@ This file is a durable handoff for AI coding agents. It documents what the proje
 | `apps/web` | Next.js frontend |
 | `services/api` | Fastify API service |
 | `vendor/iris.c` | Vendored native inference backend |
-| `Models/` | Model folders (flux-klein-4b-distilled, etc.) |
+| `vendor/iris-lora.patch` | Custom LoRA implementation patch for iris.c |
+| `Models/` | Model folders (flux-klein, zimage-turbo, etc.) |
 | `Loras/` | LoRA .safetensors files |
 | `storage/outputs` | Generated images |
 | `storage/uploads` | Uploaded reference images |
@@ -39,7 +41,7 @@ This file is a durable handoff for AI coding agents. It documents what the proje
 
 - Frontend: Next.js App Router, React 19, TypeScript, Tailwind, shadcn/ui, TanStack React Query, lucide-react.
 - API: Fastify, TypeScript, Zod, better-sqlite3, sharp, dotenv.
-- Native: Vendored `antirez/iris.c`, built with `make mps`.
+- Native: Vendored `antirez/iris.c`, patched with `vendor/iris-lora.patch`, built with `make mps`.
 - Storage: local filesystem + SQLite.
 - Progress: SSE with granular job phases parsing iris.c stdout.
 
@@ -52,6 +54,13 @@ This file is a durable handoff for AI coding agents. It documents what the proje
    - Parses stdout/stderr via `iris-progress.ts`.
    - Emits events: `queued` → `running` → `progress` (granular) → `saving` → `done` | `failed` | `cancelled`.
 4. **SSE**: Frontend subscribes to `GET /api/jobs/stream` for live updates.
+
+## LoRA Support
+
+- **Patching**: iris.c does not natively support LoRAs. We maintain a custom implementation in `vendor/iris-lora.patch`.
+- **Application**: The `quickstart.sh` script applies this patch to the `antirez/iris.c` checkout before building.
+- **Compatibility**: Supports `fal-ai` style FLUX LoRAs (rank-matched tensors).
+- **Z-Image**: LoRAs are **not supported** on Z-Image Turbo (S3-DiT architecture).
 
 ## UX rules
 
