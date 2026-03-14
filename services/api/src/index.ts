@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
+import fs from 'node:fs';
 import { config } from './config.js';
 import { jobRoutes } from './routes/jobs.js';
 import { benchmarkRoutes } from './routes/benchmark.js';
@@ -11,10 +12,16 @@ import { uploadRoutes } from './routes/uploads.js';
 import { restoreQueuedJobs } from './worker.js';
 import { restoreBenchmarkRuns } from './benchmark.js';
 
+// Ensure storage directories exist before registering static file plugins.
+// On a fresh clone these directories are gitignored and won't exist yet.
+fs.mkdirSync(config.outputDir, { recursive: true });
+fs.mkdirSync(config.uploadDir, { recursive: true });
+fs.mkdirSync(config.thumbDir, { recursive: true });
+
 const app = Fastify({ logger: true });
 
 await app.register(cors, {
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: true,
 });
 
 await app.register(multipart, {
