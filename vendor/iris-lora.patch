@@ -1,0 +1,755 @@
+diff --git a/iris.c b/iris.c
+index 310a773..7361308 100644
+--- a/iris.c
++++ b/iris.c
+@@ -49,6 +49,11 @@ extern float *iris_image_to_tensor(const iris_image *img);
+ extern iris_transformer_flux_t *iris_transformer_load_flux(FILE *f);
+ extern iris_transformer_flux_t *iris_transformer_load_safetensors_flux(const char *model_dir);
+ extern iris_transformer_flux_t *iris_transformer_load_safetensors_mmap_flux(const char *model_dir);
++extern int iris_transformer_apply_lora_flux(iris_transformer_flux_t *tf,
++                                            const char *lora_path,
++                                            float lora_scale,
++                                            char *errbuf,
++                                            size_t errbuf_size);
+ extern void iris_transformer_free_flux(iris_transformer_flux_t *tf);
+ extern float *iris_transformer_forward_flux(iris_transformer_flux_t *tf,
+                                         const float *img_latent, int img_h, int img_w,
+@@ -204,6 +209,11 @@ struct iris_ctx {
+ 
+     /* Memory mode */
+     int use_mmap;  /* Use mmap for text encoder (lower memory, slower) */
++
++    /* Optional FLUX LoRA adapter */
++    int use_lora;
++    float lora_scale;
++    char lora_path[1024];
+ };
+ 
+ /* Global error message */
+@@ -503,6 +513,22 @@ void iris_set_mmap(iris_ctx *ctx, int enable) {
+     if (ctx) ctx->use_mmap = enable;
+ }
+ 
++void iris_set_lora(iris_ctx *ctx, const char *path, float scale) {
++    if (!ctx) return;
++
++    if (!path || !path[0]) {
++        ctx->use_lora = 0;
++        ctx->lora_scale = 1.0f;
++        ctx->lora_path[0] = '\0';
++        return;
++    }
++
++    ctx->use_lora = 1;
++    ctx->lora_scale = scale;
++    strncpy(ctx->lora_path, path, sizeof(ctx->lora_path) - 1);
++    ctx->lora_path[sizeof(ctx->lora_path) - 1] = '\0';
++}
++
+ int iris_is_distilled(iris_ctx *ctx) {
+     return ctx ? ctx->is_distilled : 1;
+ }
+@@ -547,7 +573,12 @@ static int iris_load_transformer_if_needed(iris_ctx *ctx) {
+     if (ctx->transformer) return 1;  /* Already loaded */
+ 
+     if (iris_phase_callback) iris_phase_callback("Loading FLUX.2 transformer", 0);
+-    if (ctx->use_mmap) {
++    if (ctx->use_lora && ctx->use_mmap) {
++        fprintf(stderr, "LoRA selected: disabling transformer mmap for this run\n");
++    }
++    if (ctx->use_lora) {
++        ctx->transformer = iris_transformer_load_safetensors_flux(ctx->model_dir);
++    } else if (ctx->use_mmap) {
+         ctx->transformer = iris_transformer_load_safetensors_mmap_flux(ctx->model_dir);
+     } else {
+         ctx->transformer = iris_transformer_load_safetensors_flux(ctx->model_dir);
+@@ -558,6 +589,23 @@ static int iris_load_transformer_if_needed(iris_ctx *ctx) {
+         set_error("Failed to load transformer");
+         return 0;
+     }
++
++    if (ctx->use_lora) {
++        char errbuf[256] = {0};
++        if (!iris_transformer_apply_lora_flux(
++                ctx->transformer,
++                ctx->lora_path,
++                ctx->lora_scale,
++                errbuf,
++                sizeof(errbuf))) {
++            if (ctx->transformer) {
++                iris_transformer_free_flux(ctx->transformer);
++                ctx->transformer = NULL;
++            }
++            set_error(errbuf[0] ? errbuf : "Failed to apply LoRA");
++            return 0;
++        }
++    }
+     return 1;
+ }
+ 
+diff --git a/iris.h b/iris.h
+index 4d59c72..a3bdefd 100644
+--- a/iris.h
++++ b/iris.h
+@@ -128,6 +128,12 @@ void iris_release_text_encoder(iris_ctx *ctx);
+  */
+ void iris_set_mmap(iris_ctx *ctx, int enable);
+ 
++/*
++ * Configure one optional FLUX LoRA adapter for the current context.
++ * Pass NULL to clear the LoRA. Scale defaults to 1.0 in the CLI.
++ */
++void iris_set_lora(iris_ctx *ctx, const char *path, float scale);
++
+ /*
+  * Check if model is distilled (4-step) or base (50-step with CFG).
+  * Returns 1 for distilled, 0 for base.
+diff --git a/iris_transformer_flux.c b/iris_transformer_flux.c
+index 267fa5a..7e763c7 100644
+--- a/iris_transformer_flux.c
++++ b/iris_transformer_flux.c
+@@ -19,6 +19,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <stdarg.h>
+ #include <math.h>
+ #include <time.h>
+ #include <sys/time.h>
+@@ -327,6 +328,557 @@ typedef struct iris_transformer_flux {
+     int num_sf_files;
+ } iris_transformer_flux_t;
+ 
++/* ========================================================================
++ * FLUX LoRA Application
++ * ======================================================================== */
++
++typedef struct {
++    float *f32;
++    uint16_t *bf16;
++    int rows;
++    int cols;
++} lora_matrix_part_t;
++
++typedef struct {
++    char name[128];
++    lora_matrix_part_t parts[3];
++    int num_parts;
++} lora_target_slot_t;
++
++typedef struct {
++    char target[256];
++    const safetensor_t *a;
++    const safetensor_t *b;
++    const safetensor_t *alpha;
++} lora_pair_t;
++
++static inline float lora_bf16_to_f32(uint16_t bf16) {
++    uint32_t bits = ((uint32_t)bf16) << 16;
++    float out;
++    memcpy(&out, &bits, sizeof(out));
++    return out;
++}
++
++static inline uint16_t lora_f32_to_bf16(float value) {
++    uint32_t bits;
++    memcpy(&bits, &value, sizeof(bits));
++    uint32_t lsb = (bits >> 16) & 1u;
++    uint32_t rounding_bias = 0x7FFFu + lsb;
++    return (uint16_t)((bits + rounding_bias) >> 16);
++}
++
++static int ends_with(const char *s, const char *suffix) {
++    size_t slen = strlen(s);
++    size_t suffix_len = strlen(suffix);
++    if (suffix_len > slen) return 0;
++    return strcmp(s + slen - suffix_len, suffix) == 0;
++}
++
++static void set_lora_error(char *errbuf, size_t errbuf_size, const char *fmt, ...) {
++    if (!errbuf || errbuf_size == 0) return;
++
++    va_list args;
++    va_start(args, fmt);
++    vsnprintf(errbuf, errbuf_size, fmt, args);
++    va_end(args);
++}
++
++static float read_lora_scalar(const safetensors_file_t *sf, const safetensor_t *tensor, float default_value) {
++    if (!sf || !tensor || safetensor_numel(tensor) < 1) {
++        return default_value;
++    }
++
++    const void *data = safetensors_data(sf, tensor);
++    if (!data) {
++        return default_value;
++    }
++
++    switch (tensor->dtype) {
++        case DTYPE_F32:
++            return ((const float *)data)[0];
++        case DTYPE_F16: {
++            const uint16_t raw = ((const uint16_t *)data)[0];
++            /* Reuse the existing f16 conversion path via a temporary tensor load. */
++            float *tmp = safetensors_get_f32(sf, tensor);
++            if (!tmp) return default_value;
++            float value = tmp[0];
++            free(tmp);
++            (void)raw;
++            return value;
++        }
++        case DTYPE_BF16:
++            return lora_bf16_to_f32(((const uint16_t *)data)[0]);
++        case DTYPE_I32:
++            return (float)((const int32_t *)data)[0];
++        case DTYPE_I64:
++            return (float)((const int64_t *)data)[0];
++        default:
++            return default_value;
++    }
++}
++
++static int normalize_lora_key(const char *key, char *out, size_t out_size) {
++    const char *normalized = key;
++    if (!strncmp(normalized, "transformer.", 12)) {
++        normalized += 12;
++    }
++
++    static const struct {
++        const char *suffix;
++        const char *normalized_suffix;
++    } suffixes[] = {
++        { ".lora_A.weight", "" },
++        { ".lora_B.weight", "" },
++        { ".lora_down.weight", "" },
++        { ".lora_up.weight", "" },
++        { ".alpha", "" },
++    };
++
++    for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++) {
++        if (ends_with(normalized, suffixes[i].suffix)) {
++            size_t len = strlen(normalized) - strlen(suffixes[i].suffix);
++            if (len + 1 > out_size) return 0;
++            memcpy(out, normalized, len);
++            out[len] = '\0';
++            return 1;
++        }
++    }
++
++    if (strstr(normalized, "lora") || strstr(normalized, "adapter")) {
++        if (out_size > 0) out[0] = '\0';
++        return -1;
++    }
++
++    if (out_size > 0) out[0] = '\0';
++    return 0;
++}
++
++static lora_pair_t *find_or_add_lora_pair(lora_pair_t *pairs, int *count, const char *target) {
++    for (int i = 0; i < *count; i++) {
++        if (strcmp(pairs[i].target, target) == 0) {
++            return &pairs[i];
++        }
++    }
++
++    if (*count >= SAFETENSORS_MAX_TENSORS) {
++        return NULL;
++    }
++
++    lora_pair_t *pair = &pairs[*count];
++    memset(pair, 0, sizeof(*pair));
++    strncpy(pair->target, target, sizeof(pair->target) - 1);
++    (*count)++;
++    return pair;
++}
++
++static int add_lora_target_slot(lora_target_slot_t *slots, int *count, int max_slots, const char *name,
++                                float *f32, uint16_t *bf16, int rows, int cols) {
++    if (*count >= max_slots) return 0;
++    strncpy(slots[*count].name, name, sizeof(slots[*count].name) - 1);
++    slots[*count].name[sizeof(slots[*count].name) - 1] = '\0';
++    slots[*count].parts[0].f32 = f32;
++    slots[*count].parts[0].bf16 = bf16;
++    slots[*count].parts[0].rows = rows;
++    slots[*count].parts[0].cols = cols;
++    slots[*count].num_parts = 1;
++    (*count)++;
++    return 1;
++}
++
++static int add_lora_target_slot_split(lora_target_slot_t *slots, int *count, int max_slots, const char *name,
++                                      float *f32_a, uint16_t *bf16_a, int rows_a,
++                                      float *f32_b, uint16_t *bf16_b, int rows_b,
++                                      int cols) {
++    if (*count >= max_slots) return 0;
++    strncpy(slots[*count].name, name, sizeof(slots[*count].name) - 1);
++    slots[*count].name[sizeof(slots[*count].name) - 1] = '\0';
++    slots[*count].parts[0].f32 = f32_a;
++    slots[*count].parts[0].bf16 = bf16_a;
++    slots[*count].parts[0].rows = rows_a;
++    slots[*count].parts[0].cols = cols;
++    slots[*count].parts[1].f32 = f32_b;
++    slots[*count].parts[1].bf16 = bf16_b;
++    slots[*count].parts[1].rows = rows_b;
++    slots[*count].parts[1].cols = cols;
++    slots[*count].num_parts = 2;
++    (*count)++;
++    return 1;
++}
++
++static int add_lora_target_slot_split3(lora_target_slot_t *slots, int *count, int max_slots, const char *name,
++                                       float *f32_a, uint16_t *bf16_a, int rows_a,
++                                       float *f32_b, uint16_t *bf16_b, int rows_b,
++                                       float *f32_c, uint16_t *bf16_c, int rows_c,
++                                       int cols) {
++    if (*count >= max_slots) return 0;
++    strncpy(slots[*count].name, name, sizeof(slots[*count].name) - 1);
++    slots[*count].name[sizeof(slots[*count].name) - 1] = '\0';
++    slots[*count].parts[0].f32 = f32_a;
++    slots[*count].parts[0].bf16 = bf16_a;
++    slots[*count].parts[0].rows = rows_a;
++    slots[*count].parts[0].cols = cols;
++    slots[*count].parts[1].f32 = f32_b;
++    slots[*count].parts[1].bf16 = bf16_b;
++    slots[*count].parts[1].rows = rows_b;
++    slots[*count].parts[1].cols = cols;
++    slots[*count].parts[2].f32 = f32_c;
++    slots[*count].parts[2].bf16 = bf16_c;
++    slots[*count].parts[2].rows = rows_c;
++    slots[*count].parts[2].cols = cols;
++    slots[*count].num_parts = 3;
++    (*count)++;
++    return 1;
++}
++
++static int build_lora_target_slots(iris_transformer_flux_t *tf, lora_target_slot_t *slots, int max_slots) {
++    int count = 0;
++    int h = tf->hidden_size;
++    int mlp = tf->mlp_hidden;
++
++    if (max_slots < 16) return 0;
++
++    if (!add_lora_target_slot(slots, &count, max_slots, "x_embedder.weight",
++                              tf->img_in_weight, tf->img_in_weight_bf16,
++                              h, tf->latent_channels)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "context_embedder.weight",
++                              tf->txt_in_weight, tf->txt_in_weight_bf16,
++                              h, tf->text_dim)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "time_guidance_embed.timestep_embedder.linear_1.weight",
++                              tf->time_embed.fc1_weight, NULL,
++                              h, tf->time_embed.sincos_dim)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "time_guidance_embed.timestep_embedder.linear_2.weight",
++                              tf->time_embed.fc2_weight, NULL,
++                              h, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "double_stream_modulation_img.linear.weight",
++                              tf->adaln_double_img_weight, tf->adaln_double_img_weight_bf16,
++                              h * 6, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "double_stream_modulation_txt.linear.weight",
++                              tf->adaln_double_txt_weight, tf->adaln_double_txt_weight_bf16,
++                              h * 6, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "single_stream_modulation.linear.weight",
++                              tf->adaln_single_weight, tf->adaln_single_weight_bf16,
++                              h * 3, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "proj_out.weight",
++                              tf->final_proj_weight, tf->final_proj_weight_bf16,
++                              tf->latent_channels, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "base_model.model.img_in",
++                              tf->img_in_weight, tf->img_in_weight_bf16,
++                              h, tf->latent_channels)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "base_model.model.txt_in",
++                              tf->txt_in_weight, tf->txt_in_weight_bf16,
++                              h, tf->text_dim)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "base_model.model.time_in.in_layer",
++                              tf->time_embed.fc1_weight, NULL,
++                              h, tf->time_embed.sincos_dim)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "base_model.model.time_in.out_layer",
++                              tf->time_embed.fc2_weight, NULL,
++                              h, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "base_model.model.double_stream_modulation_img.lin",
++                              tf->adaln_double_img_weight, tf->adaln_double_img_weight_bf16,
++                              h * 6, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "base_model.model.double_stream_modulation_txt.lin",
++                              tf->adaln_double_txt_weight, tf->adaln_double_txt_weight_bf16,
++                              h * 6, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "base_model.model.single_stream_modulation.lin",
++                              tf->adaln_single_weight, tf->adaln_single_weight_bf16,
++                              h * 3, h)) return 0;
++    if (!add_lora_target_slot(slots, &count, max_slots, "base_model.model.final_layer.linear",
++                              tf->final_proj_weight, tf->final_proj_weight_bf16,
++                              tf->latent_channels, h)) return 0;
++
++    for (int i = 0; i < tf->num_double_layers; i++) {
++        double_block_t *b = &tf->double_blocks[i];
++        char name[128];
++
++        snprintf(name, sizeof(name), "transformer_blocks.%d.attn.to_q.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->img_q_weight, b->img_q_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.attn.to_k.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->img_k_weight, b->img_k_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.attn.to_v.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->img_v_weight, b->img_v_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.attn.to_out.0.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->img_proj_weight, b->img_proj_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "base_model.model.double_blocks.%d.img_attn.proj", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->img_proj_weight, b->img_proj_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "base_model.model.double_blocks.%d.img_attn.qkv", i);
++        if (!add_lora_target_slot_split3(slots, &count, max_slots, name,
++                                         b->img_q_weight, b->img_q_weight_bf16, h,
++                                         b->img_k_weight, b->img_k_weight_bf16, h,
++                                         b->img_v_weight, b->img_v_weight_bf16, h,
++                                         h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.ff.linear_in.weight", i);
++        if (!add_lora_target_slot_split(slots, &count, max_slots, name,
++                                        b->img_mlp_gate_weight, b->img_mlp_gate_weight_bf16, mlp,
++                                        b->img_mlp_up_weight, b->img_mlp_up_weight_bf16, mlp,
++                                        h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.ff.linear_out.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->img_mlp_down_weight, b->img_mlp_down_weight_bf16, h, mlp)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.attn.add_q_proj.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->txt_q_weight, b->txt_q_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.attn.add_k_proj.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->txt_k_weight, b->txt_k_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.attn.add_v_proj.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->txt_v_weight, b->txt_v_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.attn.to_add_out.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->txt_proj_weight, b->txt_proj_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "base_model.model.double_blocks.%d.txt_attn.proj", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->txt_proj_weight, b->txt_proj_weight_bf16, h, h)) return 0;
++        snprintf(name, sizeof(name), "base_model.model.double_blocks.%d.txt_attn.qkv", i);
++        if (!add_lora_target_slot_split3(slots, &count, max_slots, name,
++                                         b->txt_q_weight, b->txt_q_weight_bf16, h,
++                                         b->txt_k_weight, b->txt_k_weight_bf16, h,
++                                         b->txt_v_weight, b->txt_v_weight_bf16, h,
++                                         h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.ff_context.linear_in.weight", i);
++        if (!add_lora_target_slot_split(slots, &count, max_slots, name,
++                                        b->txt_mlp_gate_weight, b->txt_mlp_gate_weight_bf16, mlp,
++                                        b->txt_mlp_up_weight, b->txt_mlp_up_weight_bf16, mlp,
++                                        h)) return 0;
++        snprintf(name, sizeof(name), "transformer_blocks.%d.ff_context.linear_out.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->txt_mlp_down_weight, b->txt_mlp_down_weight_bf16, h, mlp)) return 0;
++    }
++
++    for (int i = 0; i < tf->num_single_layers; i++) {
++        single_block_t *b = &tf->single_blocks[i];
++        char name[128];
++
++        snprintf(name, sizeof(name), "single_transformer_blocks.%d.attn.to_qkv_mlp_proj.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->qkv_mlp_weight, b->qkv_mlp_weight_bf16,
++                                  h * 3 + mlp * 2, h)) return 0;
++        snprintf(name, sizeof(name), "base_model.model.single_blocks.%d.linear1", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->qkv_mlp_weight, b->qkv_mlp_weight_bf16,
++                                  h * 3 + mlp * 2, h)) return 0;
++        snprintf(name, sizeof(name), "single_transformer_blocks.%d.attn.to_out.weight", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->proj_mlp_weight, b->proj_mlp_weight_bf16,
++                                  h, h + mlp)) return 0;
++        snprintf(name, sizeof(name), "base_model.model.single_blocks.%d.linear2", i);
++        if (!add_lora_target_slot(slots, &count, max_slots, name, b->proj_mlp_weight, b->proj_mlp_weight_bf16,
++                                  h, h + mlp)) return 0;
++    }
++
++    return count;
++}
++
++static lora_target_slot_t *find_lora_target_slot(lora_target_slot_t *slots, int count, const char *target) {
++    for (int i = 0; i < count; i++) {
++        if (strcmp(slots[i].name, target) == 0) {
++            return &slots[i];
++        }
++    }
++    return NULL;
++}
++
++static void apply_lora_delta_to_part(const float *a_f32, const float *b_f32, int rank,
++                                     float alpha_scale, lora_matrix_part_t *part, int row_offset) {
++    for (int row = 0; row < part->rows; row++) {
++        int global_row = row_offset + row;
++        for (int col = 0; col < part->cols; col++) {
++            float sum = 0.0f;
++            for (int k = 0; k < rank; k++) {
++                sum += b_f32[global_row * rank + k] * a_f32[k * part->cols + col];
++            }
++
++            float delta = sum * alpha_scale;
++            if (part->f32) {
++                part->f32[row * part->cols + col] += delta;
++            }
++            if (part->bf16) {
++                size_t idx = (size_t)row * part->cols + col;
++                float value = lora_bf16_to_f32(part->bf16[idx]) + delta;
++                part->bf16[idx] = lora_f32_to_bf16(value);
++            }
++        }
++    }
++}
++
++static int apply_lora_pair_to_slot(safetensors_file_t *sf,
++                                   const lora_pair_t *pair,
++                                   lora_target_slot_t *slot,
++                                   float lora_scale,
++                                   char *errbuf,
++                                   size_t errbuf_size) {
++    if (!pair->a || !pair->b) {
++        set_lora_error(errbuf, errbuf_size, "LoRA tensor pair incomplete for %s", pair->target);
++        return 0;
++    }
++
++    if (!((pair->a->dtype == DTYPE_BF16 || pair->a->dtype == DTYPE_F16 || pair->a->dtype == DTYPE_F32) &&
++          (pair->b->dtype == DTYPE_BF16 || pair->b->dtype == DTYPE_F16 || pair->b->dtype == DTYPE_F32))) {
++        set_lora_error(errbuf, errbuf_size, "LoRA %s must use floating-point tensors", pair->target);
++        return 0;
++    }
++    if (pair->a->ndim != 2 || pair->b->ndim != 2) {
++        set_lora_error(errbuf, errbuf_size, "LoRA %s must use rank-2 tensors", pair->target);
++        return 0;
++    }
++
++    int64_t rank = pair->a->shape[0];
++    int64_t cols = pair->a->shape[1];
++    int64_t rows = pair->b->shape[0];
++    int64_t b_rank = pair->b->shape[1];
++    int target_rows = 0;
++    int target_cols = 0;
++    for (int i = 0; i < slot->num_parts; i++) {
++        target_rows += slot->parts[i].rows;
++        target_cols = slot->parts[i].cols;
++        if (!slot->parts[i].f32 && !slot->parts[i].bf16) {
++            set_lora_error(errbuf, errbuf_size, "LoRA target %s has no writable weights", pair->target);
++            return 0;
++        }
++    }
++
++    if (rank <= 0 || b_rank != rank) {
++        set_lora_error(errbuf, errbuf_size, "LoRA rank mismatch for %s", pair->target);
++        return 0;
++    }
++    if (cols != target_cols || rows != target_rows) {
++        set_lora_error(
++            errbuf,
++            errbuf_size,
++            "LoRA shape mismatch for %s (expected [%d,%d], got [%lld,%lld])",
++            pair->target,
++            target_rows,
++            target_cols,
++            (long long)rows,
++            (long long)cols
++        );
++        return 0;
++    }
++
++    float *a_f32 = safetensors_get_f32(sf, pair->a);
++    float *b_f32 = safetensors_get_f32(sf, pair->b);
++    if (!a_f32 || !b_f32) {
++        free(a_f32);
++        free(b_f32);
++        set_lora_error(errbuf, errbuf_size, "Failed to read LoRA tensor data for %s", pair->target);
++        return 0;
++    }
++
++    float alpha = pair->alpha ? read_lora_scalar(sf, pair->alpha, (float)rank) : (float)rank;
++    float alpha_scale = (alpha / (float)rank) * lora_scale;
++
++    int row_offset = 0;
++    for (int i = 0; i < slot->num_parts; i++) {
++        apply_lora_delta_to_part(a_f32, b_f32, (int)rank, alpha_scale, &slot->parts[i], row_offset);
++        row_offset += slot->parts[i].rows;
++    }
++
++    free(a_f32);
++    free(b_f32);
++    return 1;
++}
++
++int iris_transformer_apply_lora_flux(iris_transformer_flux_t *tf,
++                                     const char *lora_path,
++                                     float lora_scale,
++                                     char *errbuf,
++                                     size_t errbuf_size) {
++    if (!tf || !lora_path || !lora_path[0]) {
++        set_lora_error(errbuf, errbuf_size, "Missing LoRA path");
++        return 0;
++    }
++    if (tf->use_mmap) {
++        set_lora_error(errbuf, errbuf_size, "LoRA application requires non-mmap transformer weights");
++        return 0;
++    }
++
++    safetensors_file_t *sf = safetensors_open(lora_path);
++    if (!sf) {
++        set_lora_error(errbuf, errbuf_size, "Failed to open LoRA file");
++        return 0;
++    }
++
++    lora_pair_t pairs[SAFETENSORS_MAX_TENSORS];
++    int pair_count = 0;
++    int saw_runtime_tensor = 0;
++
++    for (int i = 0; i < sf->num_tensors; i++) {
++        const safetensor_t *tensor = &sf->tensors[i];
++        char target[256];
++        int normalized = normalize_lora_key(tensor->name, target, sizeof(target));
++        if (normalized == 0) {
++            continue;
++        }
++        if (normalized < 0) {
++            safetensors_close(sf);
++            set_lora_error(errbuf, errbuf_size, "Unsupported LoRA tensor key: %s", tensor->name);
++            return 0;
++        }
++
++        saw_runtime_tensor = 1;
++        lora_pair_t *pair = find_or_add_lora_pair(pairs, &pair_count, target);
++        if (!pair) {
++            safetensors_close(sf);
++            set_lora_error(errbuf, errbuf_size, "Too many LoRA tensors");
++            return 0;
++        }
++
++        if (ends_with(tensor->name, ".lora_A.weight") || ends_with(tensor->name, ".lora_down.weight")) {
++            pair->a = tensor;
++        } else if (ends_with(tensor->name, ".lora_B.weight") || ends_with(tensor->name, ".lora_up.weight")) {
++            pair->b = tensor;
++        } else if (ends_with(tensor->name, ".alpha")) {
++            pair->alpha = tensor;
++        }
++    }
++
++    if (!saw_runtime_tensor || pair_count == 0) {
++        safetensors_close(sf);
++        set_lora_error(errbuf, errbuf_size, "The file does not contain supported FLUX LoRA tensors");
++        return 0;
++    }
++
++    int max_slots = 16 + (tf->num_double_layers * 16) + (tf->num_single_layers * 4);
++    if (max_slots < 16) max_slots = 16;
++
++    lora_target_slot_t *slots = calloc((size_t)max_slots, sizeof(lora_target_slot_t));
++    if (!slots) {
++        safetensors_close(sf);
++        set_lora_error(errbuf, errbuf_size, "Failed to allocate FLUX LoRA target map");
++        return 0;
++    }
++
++    int slot_count = build_lora_target_slots(tf, slots, max_slots);
++    if (slot_count <= 0) {
++        free(slots);
++        safetensors_close(sf);
++        set_lora_error(errbuf, errbuf_size, "Failed to build FLUX LoRA target map");
++        return 0;
++    }
++
++    for (int i = 0; i < pair_count; i++) {
++        lora_target_slot_t *slot = find_lora_target_slot(slots, slot_count, pairs[i].target);
++        if (!slot) {
++            free(slots);
++            safetensors_close(sf);
++            set_lora_error(errbuf, errbuf_size, "Unsupported FLUX LoRA target: %s", pairs[i].target);
++            return 0;
++        }
++        if (!apply_lora_pair_to_slot(sf, &pairs[i], slot, lora_scale, errbuf, errbuf_size)) {
++            free(slots);
++            safetensors_close(sf);
++            return 0;
++        }
++    }
++
++    free(slots);
++
++#ifdef USE_METAL
++    if (tf->use_bf16) {
++        iris_metal_clear_weight_cache_only();
++        iris_metal_clear_bf16_cache_only();
++        iris_metal_clear_f16_cache_only();
++    }
++#endif
++
++    if (iris_verbose) {
++        fprintf(stderr, "Applied FLUX LoRA: %s (scale %.3f)\n", lora_path, lora_scale);
++    }
++
++    safetensors_close(sf);
++    return 1;
++}
++
+ /* ========================================================================
+  * Transformer Config Parsing
+  * ======================================================================== */
+diff --git a/main.c b/main.c
+index 82c23be..08c8f88 100644
+--- a/main.c
++++ b/main.c
+@@ -14,6 +14,8 @@
+  *   -H, --height N        Output height (default: 256)
+  *   -s, --steps N         Number of sampling steps (default: 4)
+  *   -S, --seed N          Random seed (-1 for random)
++ *       --lora PATH       Optional FLUX LoRA safetensors file
++ *       --lora-scale N    LoRA strength multiplier (default: 1.0)
+  *   -i, --input PATH      Input image for img2img
+  *   -q, --quiet           No output, just generate
+  *   -v, --verbose         Extra detailed output
+@@ -235,6 +237,9 @@ static void print_usage(const char *prog) {
+     fprintf(stderr, "      --flowmatch       Use Z-Image FlowMatch Euler schedule\n\n");
+     fprintf(stderr, "Model options:\n");
+     fprintf(stderr, "      --base            Force base model mode (undistilled, CFG enabled)\n\n");
++    fprintf(stderr, "LoRA options:\n");
++    fprintf(stderr, "      --lora PATH       Apply one FLUX LoRA safetensors file\n");
++    fprintf(stderr, "      --lora-scale N    LoRA strength multiplier (default: 1.0)\n\n");
+     fprintf(stderr, "Reference images (img2img / multi-reference):\n");
+     fprintf(stderr, "  -i, --input PATH      Reference image (can specify up to %d)\n", MAX_INPUT_IMAGES);
+     fprintf(stderr, "                        Multiple -i flags combine images via in-context conditioning\n\n");
+@@ -289,6 +294,8 @@ int main(int argc, char *argv[]) {
+         {"show-steps", no_argument,       0, 'K'},
+         {"zoom",       required_argument, 0, 'z'},
+         {"base",       no_argument,       0, 'B'},
++        {"lora",       required_argument, 0, 262},
++        {"lora-scale", required_argument, 0, 263},
+         {"linear",     no_argument,       0, 'L'},
+         {"power",      no_argument,       0, 256},
+         {"power-alpha",required_argument, 0, 257},
+@@ -308,6 +315,8 @@ int main(int argc, char *argv[]) {
+     int num_inputs = 0;
+     char *embeddings_path = NULL;
+     char *noise_path = NULL;
++    char *lora_path = NULL;
++    float lora_scale = 1.0f;
+ 
+     iris_params params = {
+         .width = DEFAULT_WIDTH,
+@@ -361,6 +370,8 @@ int main(int argc, char *argv[]) {
+             case 'K': show_steps = 1; break;
+             case 'z': terminal_set_zoom(atoi(optarg)); break;
+             case 'B': force_base = 1; break;
++            case 262: lora_path = optarg; break;
++            case 263: lora_scale = atof(optarg); break;
+             case 'L': params.schedule = IRIS_SCHEDULE_LINEAR; break;
+             case 256: params.schedule = IRIS_SCHEDULE_POWER; break;
+             case 257: params.power_alpha = atof(optarg); params.schedule = IRIS_SCHEDULE_POWER; break;
+@@ -468,6 +479,7 @@ int main(int argc, char *argv[]) {
+     LOG_VERBOSE("Output: %s\n", output_path);
+     LOG_VERBOSE("Size: %dx%d\n", params.width, params.height);
+     LOG_VERBOSE("Steps: %d\n", params.num_steps);
++    if (lora_path) LOG_VERBOSE("LoRA: %s (scale %.3f)\n", lora_path, lora_scale);
+     if (num_inputs > 0) {
+         LOG_VERBOSE("Input images: %d\n", num_inputs);
+         for (int i = 0; i < num_inputs; i++) {
+@@ -497,6 +509,9 @@ int main(int argc, char *argv[]) {
+     if (force_base) {
+         iris_set_base_mode(ctx);
+     }
++    if (lora_path) {
++        iris_set_lora(ctx, lora_path, lora_scale);
++    }
+ 
+     /* Resolve auto-parameters now that we know the model type */
+     if (!steps_set || params.num_steps <= 0) {
+@@ -515,6 +530,10 @@ int main(int argc, char *argv[]) {
+     double load_time = timer_end();
+     LOG_NORMAL(" done (%.1fs)\n", load_time);
+     LOG_NORMAL("Model: %s\n", iris_model_info(ctx));
++    if (lora_path) {
++        LOG_NORMAL("LoRA: %s\n", lora_path);
++        LOG_NORMAL("LoRA scale: %.3f\n", lora_scale);
++    }
+ 
+     /* Non-commercial license warning for 9B model */
+     if (iris_is_non_commercial(ctx) && !no_license_info

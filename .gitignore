@@ -9,6 +9,7 @@ storage/outputs/
 storage/thumbs/
 storage/app.db
 vendor/iris.c/
+!vendor/iris-lora.patch
 Models/*
 !Models/README.md
 Loras/*

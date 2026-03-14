@@ -130,6 +130,17 @@ prepare_iris_checkout() {
     git clone https://github.com/antirez/iris.c.git "$iris_dir"
   fi
 
+  # Apply custom LoRA patch if not already applied.
+  local lora_patch="${ROOT_DIR}/vendor/iris-lora.patch"
+  if [[ -f "$lora_patch" ]]; then
+    if git -C "$iris_dir" apply --check "$lora_patch" 2>/dev/null; then
+      log "Applying LoRA patch to iris.c"
+      git -C "$iris_dir" apply "$lora_patch"
+    else
+      log "LoRA patch already applied (or not needed)"
+    fi
+  fi
+
   log "Building iris.c with Metal support via make mps"
   make -C "$iris_dir" mps
 
