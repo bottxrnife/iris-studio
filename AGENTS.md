@@ -60,7 +60,7 @@ This file is a durable handoff for AI coding agents. It documents what the proje
 - **Patching**: iris.c does not natively support LoRAs. We maintain a custom implementation in `vendor/iris-lora.patch`.
 - **Application**: The `quickstart.sh` script applies this patch to the `antirez/iris.c` checkout before building.
 - **Compatibility**: Supports `fal-ai` style FLUX LoRAs (rank-matched tensors).
-- **Z-Image**: LoRAs are **not supported** on Z-Image Turbo (S3-DiT architecture).
+- **Z-Image**: LoRAs are **experimentally supported** on Z-Image Turbo. Use FLUX-compatible LoRAs with caution as architectures differ.
 
 ## UX rules
 

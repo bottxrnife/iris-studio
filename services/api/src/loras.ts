@@ -57,6 +57,8 @@ const SUPPORTED_MODEL_PATTERNS: Array<{ id: ModelId; tokens: string[] }> = [
   { id: 'flux-klein-base-4b', tokens: ['flux', 'klein', 'base', '4b'] },
   { id: 'flux-klein-4b', tokens: ['flux', 'klein', '4b'] },
   { id: 'zimage-turbo-6b', tokens: ['z', 'image', 'turbo'] },
+  { id: 'zimage-turbo-6b', tokens: ['zimage'] },
+  { id: 'zimage-turbo-6b', tokens: ['z', 'image'] },
 ];
 
 interface SerializedLoraOverrides {
@@ -222,6 +224,9 @@ const ALL_FLUX_KLEIN_MODEL_IDS: ModelId[] = [
   'flux-klein-9b',
   'flux-klein-base-4b',
   'flux-klein-4b',
+  // Includes Z-Image Turbo for experimental LoRA compatibility,
+  // as it shares a similar transformer architecture that iris.c may accept.
+  'zimage-turbo-6b',
 ];
 
 const BROAD_FLUX_TOKENS = [
