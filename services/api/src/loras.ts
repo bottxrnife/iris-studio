@@ -216,6 +216,19 @@ function detectFormat(
   return { format: 'unknown', confidence: 'unknown' };
 }
 
+const ALL_FLUX_KLEIN_MODEL_IDS = SUPPORTED_MODEL_PATTERNS.map((pattern) => pattern.id);
+
+const BROAD_FLUX_TOKENS = [
+  ['flux', '1', 'dev'],
+  ['flux', '1', 'schnell'],
+  ['flux', 'dev'],
+  ['flux', 'schnell'],
+];
+
+function looksLikeFluxArchitectureTensorKeys(tensorKeys: string[]) {
+  return tensorKeys.some((key) => key.includes('double_blocks') || key.includes('single_blocks'));
+}
+
 function detectBaseModelId(metadata: Record<string, unknown>, filename: string) {
   const candidateValues = [
     metadata.ss_base_model_version,
@@ -242,6 +255,21 @@ function detectBaseModelId(metadata: Record<string, unknown>, filename: string) 
           baseModelHint: rawValue,
           detectedBaseModelId: pattern.id,
           compatibleModelIds: [pattern.id],
+        };
+      }
+    }
+  }
+
+  // Broad match: standard FLUX model names (FLUX.1-dev, FLUX.1-schnell, etc.)
+  // are architecture-compatible with all FLUX Klein variants.
+  for (const rawValue of normalizedCandidates) {
+    const searchValue = normalizeSearchText(rawValue);
+    for (const tokens of BROAD_FLUX_TOKENS) {
+      if (tokens.every((token) => searchValue.includes(token))) {
+        return {
+          baseModelHint: rawValue,
+          detectedBaseModelId: null,
+          compatibleModelIds: [...ALL_FLUX_KLEIN_MODEL_IDS],
         };
       }
     }
@@ -394,12 +422,21 @@ function inspectLoraFileWithOverride(filePath: string, override: LoraOverride | 
     const autoDetection = detectBaseModelId(metadata, filename);
     const effectiveFormat = manualFormat ?? format;
     const effectiveFormatConfidence = manualFormat ? 'manual' as const : confidence;
-    const effectiveCompatibleModelIds = manualModelId
+    let effectiveCompatibleModelIds = manualModelId
       ? [manualModelId]
       : autoDetection.compatibleModelIds;
-    const effectiveBaseModelHint = manualModelId
+    let effectiveBaseModelHint = manualModelId
       ? getSupportedModel(manualModelId)?.label ?? manualModelId
       : autoDetection.baseModelHint;
+
+    // Fallback: if metadata-based detection found no compatible models but the
+    // tensor keys indicate FLUX architecture, treat as compatible with all
+    // FLUX Klein variants. Most community FLUX LoRAs omit base-model metadata.
+    if (!manualModelId && effectiveCompatibleModelIds.length === 0
+        && loraLike && looksLikeFluxArchitectureTensorKeys(tensorKeys)) {
+      effectiveCompatibleModelIds = [...ALL_FLUX_KLEIN_MODEL_IDS];
+      effectiveBaseModelHint = effectiveBaseModelHint ?? 'FLUX (detected from tensor architecture)';
+    }
     const triggerPhrases = extractTriggerPhrases(metadata);
 
     let fileReady = true;
