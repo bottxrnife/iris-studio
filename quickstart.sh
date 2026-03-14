@@ -121,7 +121,8 @@ prepare_iris_checkout() {
   mkdir -p "$(dirname "$iris_dir")"
 
   if [[ -d "$iris_dir/.git" ]]; then
-    log "Using existing iris.c checkout at $iris_dir"
+    log "Updating existing iris.c checkout at $iris_dir"
+    git -C "$iris_dir" pull --ff-only 2>/dev/null || warn "Could not pull latest iris.c (offline or diverged). Building from current checkout."
   elif [[ -e "$iris_dir" ]]; then
     fail "The path $iris_dir already exists but is not a git checkout. Move it or choose a different location."
   else
@@ -240,6 +241,7 @@ write_env_file() {
   cat > "$ENV_PATH" <<EOF
 IRIS_BIN=$(dotenv_escape "$iris_bin")
 IRIS_MODEL_DIR=$(dotenv_escape "$model_dir")
+IRIS_LORA_DIR=$(dotenv_escape "${ROOT_DIR}/Loras")
 IRIS_OUTPUT_DIR=$(dotenv_escape "$output_dir")
 IRIS_UPLOAD_DIR=$(dotenv_escape "$upload_dir")
 IRIS_THUMB_DIR=$(dotenv_escape "$thumb_dir")
