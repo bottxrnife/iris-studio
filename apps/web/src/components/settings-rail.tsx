@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState, useCallback, useRef, useMemo, useEffect, useDeferredValue, type ChangeEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Sparkles, Image, Images, ChevronDown, ChevronUp, Upload, X, Shuffle } from 'lucide-react';
+import { useAppSettings } from '@/components/settings-provider';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -105,16 +106,112 @@ interface RefImageInfo {
   height: number;
 }
 
+interface PersistedStudioDraft {
+  mode: JobMode;
+  prompt: string;
+  selectedModel: ModelId;
+  selectedLoraId: string | null;
+  loraScale: number;
+  sizePreset: string;
+  customWidth: string;
+  customHeight: string;
+  seed: string;
+  showAdvanced: boolean;
+  steps: string;
+  guidance: string;
+  iterations: string;
+  seedMode: 'same' | 'random';
+  refImages: RefImageInfo[];
+  scalePercent: number;
+  batchPrompts: string[];
+  batchPromptFileName: string;
+}
+
+const STUDIO_DRAFT_STORAGE_KEY = 'iris-studio-draft';
+
+function readPersistedStudioDraft(): PersistedStudioDraft | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(STUDIO_DRAFT_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedStudioDraft>;
+    if (parsed.mode !== 'txt2img' && parsed.mode !== 'img2img' && parsed.mode !== 'multi-ref') {
+      return null;
+    }
+    if (
+      parsed.selectedModel !== 'flux-klein-4b'
+      && parsed.selectedModel !== 'flux-klein-base-4b'
+      && parsed.selectedModel !== 'flux-klein-9b'
+      && parsed.selectedModel !== 'flux-klein-base-9b'
+      && parsed.selectedModel !== 'zimage-turbo-6b'
+    ) {
+      return null;
+    }
+    if (parsed.seedMode !== 'same' && parsed.seedMode !== 'random') {
+      return null;
+    }
+
+    return {
+      mode: parsed.mode,
+      prompt: typeof parsed.prompt === 'string' ? parsed.prompt : '',
+      selectedModel: parsed.selectedModel,
+      selectedLoraId: typeof parsed.selectedLoraId === 'string' ? parsed.selectedLoraId : null,
+      loraScale: typeof parsed.loraScale === 'number' && Number.isFinite(parsed.loraScale) ? parsed.loraScale : 1,
+      sizePreset: typeof parsed.sizePreset === 'string' ? parsed.sizePreset : 'Custom',
+      customWidth: typeof parsed.customWidth === 'string' ? parsed.customWidth : '512',
+      customHeight: typeof parsed.customHeight === 'string' ? parsed.customHeight : '512',
+      seed: typeof parsed.seed === 'string' ? parsed.seed : '',
+      showAdvanced: parsed.showAdvanced === true,
+      steps: typeof parsed.steps === 'string' ? parsed.steps : '',
+      guidance: typeof parsed.guidance === 'string' ? parsed.guidance : '',
+      iterations: typeof parsed.iterations === 'string' ? parsed.iterations : '1',
+      seedMode: parsed.seedMode,
+      refImages: Array.isArray(parsed.refImages)
+        ? parsed.refImages.filter((entry): entry is RefImageInfo => (
+          !!entry
+          && typeof entry.filename === 'string'
+          && typeof entry.width === 'number'
+          && Number.isFinite(entry.width)
+          && typeof entry.height === 'number'
+          && Number.isFinite(entry.height)
+        ))
+        : [],
+      scalePercent: typeof parsed.scalePercent === 'number' && Number.isFinite(parsed.scalePercent) ? parsed.scalePercent : 100,
+      batchPrompts: Array.isArray(parsed.batchPrompts)
+        ? parsed.batchPrompts.filter((entry): entry is string => typeof entry === 'string')
+        : [],
+      batchPromptFileName: typeof parsed.batchPromptFileName === 'string' ? parsed.batchPromptFileName : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface SettingsRailProps {
   draft: EditorDraft | null;
   onJobCreated: (jobId: string) => void;
 }
 
 export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
+  const { settings } = useAppSettings();
   const queryClient = useQueryClient();
   const lastEstimateRef = useRef<EstimateJobResponse | null>(null);
+  const persistedDraftRef = useRef<PersistedStudioDraft | null>(
+    typeof window !== 'undefined' && settings.persistStudioDraft ? readPersistedStudioDraft() : null
+  );
+  const persistedDraft = persistedDraftRef.current;
 
   const [mode, setMode] = useState<JobMode>(() => {
+    if (persistedDraft) {
+      return persistedDraft.mode;
+    }
+
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('iris-selected-mode');
       if (stored === 'txt2img' || stored === 'img2img' || stored === 'multi-ref') {
@@ -123,8 +220,12 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     }
     return 'txt2img';
   });
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(() => persistedDraft?.prompt ?? '');
   const [selectedModel, setSelectedModel] = useState<ModelId>(() => {
+    if (persistedDraft) {
+      return persistedDraft.selectedModel;
+    }
+
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('iris-selected-model');
       if (stored === 'flux-klein-4b' || stored === 'flux-klein-base-4b' || stored === 'flux-klein-9b' || stored === 'flux-klein-base-9b' || stored === 'zimage-turbo-6b') {
@@ -133,21 +234,21 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
     }
     return 'flux-klein-9b';
   });
-  const [selectedLoraId, setSelectedLoraId] = useState<string | null>(null);
-  const [loraScale, setLoraScale] = useState(1);
-  const [sizePreset, setSizePreset] = useState('Custom');
-  const [customWidth, setCustomWidth] = useState('512');
-  const [customHeight, setCustomHeight] = useState('512');
-  const [seed, setSeed] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [steps, setSteps] = useState('');
-  const [guidance, setGuidance] = useState('');
-  const [iterations, setIterations] = useState('1');
-  const [seedMode, setSeedMode] = useState<'same' | 'random'>('same');
-  const [refImages, setRefImages] = useState<RefImageInfo[]>([]);
-  const [scalePercent, setScalePercent] = useState(100);
-  const [batchPrompts, setBatchPrompts] = useState<string[]>([]);
-  const [batchPromptFileName, setBatchPromptFileName] = useState('');
+  const [selectedLoraId, setSelectedLoraId] = useState<string | null>(() => persistedDraft?.selectedLoraId ?? null);
+  const [loraScale, setLoraScale] = useState(() => persistedDraft?.loraScale ?? 1);
+  const [sizePreset, setSizePreset] = useState(() => persistedDraft?.sizePreset ?? 'Custom');
+  const [customWidth, setCustomWidth] = useState(() => persistedDraft?.customWidth ?? '512');
+  const [customHeight, setCustomHeight] = useState(() => persistedDraft?.customHeight ?? '512');
+  const [seed, setSeed] = useState(() => persistedDraft?.seed ?? '');
+  const [showAdvanced, setShowAdvanced] = useState(() => persistedDraft?.showAdvanced ?? settings.defaultAdvancedOpen);
+  const [steps, setSteps] = useState(() => persistedDraft?.steps ?? '');
+  const [guidance, setGuidance] = useState(() => persistedDraft?.guidance ?? '');
+  const [iterations, setIterations] = useState(() => persistedDraft?.iterations ?? '1');
+  const [seedMode, setSeedMode] = useState<'same' | 'random'>(() => persistedDraft?.seedMode ?? 'same');
+  const [refImages, setRefImages] = useState<RefImageInfo[]>(() => persistedDraft?.refImages ?? []);
+  const [scalePercent, setScalePercent] = useState(() => persistedDraft?.scalePercent ?? 100);
+  const [batchPrompts, setBatchPrompts] = useState<string[]>(() => persistedDraft?.batchPrompts ?? []);
+  const [batchPromptFileName, setBatchPromptFileName] = useState(() => persistedDraft?.batchPromptFileName ?? '');
   const [batchPromptError, setBatchPromptError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -265,6 +366,54 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
   useEffect(() => {
     localStorage.setItem('iris-selected-mode', mode);
   }, [mode]);
+
+  useEffect(() => {
+    if (!settings.persistStudioDraft) {
+      window.localStorage.removeItem(STUDIO_DRAFT_STORAGE_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(STUDIO_DRAFT_STORAGE_KEY, JSON.stringify({
+      mode,
+      prompt,
+      selectedModel,
+      selectedLoraId,
+      loraScale,
+      sizePreset,
+      customWidth,
+      customHeight,
+      seed,
+      showAdvanced,
+      steps,
+      guidance,
+      iterations,
+      seedMode,
+      refImages,
+      scalePercent,
+      batchPrompts,
+      batchPromptFileName,
+    } satisfies PersistedStudioDraft));
+  }, [
+    settings.persistStudioDraft,
+    mode,
+    prompt,
+    selectedModel,
+    selectedLoraId,
+    loraScale,
+    sizePreset,
+    customWidth,
+    customHeight,
+    seed,
+    showAdvanced,
+    steps,
+    guidance,
+    iterations,
+    seedMode,
+    refImages,
+    scalePercent,
+    batchPrompts,
+    batchPromptFileName,
+  ]);
 
   useEffect(() => {
     if (!hasInstalledModel) {
@@ -639,12 +788,14 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
       model: selectedModel,
       width: resolvedSize.width,
       height: resolvedSize.height,
+      hasLora: hasSelectedLora,
+      ...(hasSelectedLora ? { loraScale } : {}),
       inputCount: estimateInputCount,
       quantity: queueTotal,
       ...(showAdvanced && Number.isFinite(parsedSteps) && parsedSteps > 0 ? { steps: parsedSteps } : {}),
       ...(showAdvanced && Number.isFinite(parsedGuidance) && parsedGuidance >= 0 ? { guidance: parsedGuidance } : {}),
     };
-  }, [canEstimate, estimateInputCount, mode, selectedModel, queueTotal, resolvedSize, showAdvanced, steps, guidance]);
+  }, [canEstimate, estimateInputCount, hasSelectedLora, loraScale, mode, selectedModel, queueTotal, resolvedSize, showAdvanced, steps, guidance]);
   const deferredEstimateRequest = useDeferredValue(estimateRequest);
   const estimateQuery = useQuery({
     queryKey: ['job-estimate', deferredEstimateRequest],
@@ -743,7 +894,7 @@ export function SettingsRail({ draft, onJobCreated }: SettingsRailProps) {
                     ))}
                   </SelectContent>
                 </Select>
-                {selectedModelInfo && (
+                {selectedModelInfo && settings.showModelGuidanceCard && (
                   <div className="rounded-lg border border-border/70 bg-background/50 p-3 text-xs text-muted-foreground">
                     <p className="text-foreground">{selectedModelInfo.summary}</p>
                     <p className="mt-1">

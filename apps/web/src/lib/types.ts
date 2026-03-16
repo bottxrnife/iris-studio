@@ -100,6 +100,8 @@ export interface EstimateJobRequest {
   model: ModelId;
   width: number;
   height: number;
+  hasLora?: boolean;
+  loraScale?: number;
   steps?: number;
   guidance?: number;
   inputCount: number;

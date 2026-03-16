@@ -6,8 +6,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="Iris Studio"
 DEFAULT_IRIS_DIR="${ROOT_DIR}/vendor/iris.c"
 DEFAULT_MODELS_DIR="${ROOT_DIR}/Models"
-HF_MODEL_URL="https://huggingface.co/black-forest-labs/FLUX.2-klein-9B"
-HF_REPO_ID="black-forest-labs/FLUX.2-klein-9B"
 ENV_PATH="${ROOT_DIR}/.env"
 
 log() {
@@ -27,43 +25,6 @@ require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     fail "Missing required command: $1"
   fi
-}
-
-prompt_with_default() {
-  local prompt="$1"
-  local default_value="$2"
-  local response
-
-  read -r -p "$prompt [$default_value]: " response
-  if [[ -z "$response" ]]; then
-    printf '%s\n' "$default_value"
-  else
-    printf '%s\n' "$response"
-  fi
-}
-
-prompt_yes_no() {
-  local prompt="$1"
-  local default_answer="$2"
-  local suffix
-  local response
-
-  if [[ "$default_answer" == "y" ]]; then
-    suffix="[Y/n]"
-  else
-    suffix="[y/N]"
-  fi
-
-  while true; do
-    read -r -p "$prompt $suffix " response
-    response="${response:-$default_answer}"
-    response="$(printf '%s' "$response" | tr '[:upper:]' '[:lower:]')"
-    case "$response" in
-      y|yes) return 0 ;;
-      n|no) return 1 ;;
-      *) printf 'Please answer y or n.\n' ;;
-    esac
-  done
 }
 
 ensure_macos() {
@@ -93,28 +54,6 @@ ensure_node() {
   fi
 }
 
-ensure_python() {
-  require_command python3
-  if ! python3 -m pip --version >/dev/null 2>&1; then
-    fail "python3 with pip is required to install the Hugging Face CLI."
-  fi
-}
-
-install_hf_cli_if_needed() {
-  if command -v hf >/dev/null 2>&1; then
-    return
-  fi
-
-  ensure_python
-  log "Installing the Hugging Face CLI under your user account."
-  python3 -m pip install --user --upgrade "huggingface_hub[cli]"
-  export PATH="$(python3 -m site --user-base)/bin:${PATH}"
-
-  if ! command -v hf >/dev/null 2>&1; then
-    fail "The Hugging Face CLI was installed but is not on PATH. Re-run this script after adding $(python3 -m site --user-base)/bin to your shell PATH."
-  fi
-}
-
 prepare_iris_checkout() {
   local iris_dir="$1"
 
@@ -124,13 +63,12 @@ prepare_iris_checkout() {
     log "Updating existing iris.c checkout at $iris_dir"
     git -C "$iris_dir" pull --ff-only 2>/dev/null || warn "Could not pull latest iris.c (offline or diverged). Building from current checkout."
   elif [[ -e "$iris_dir" ]]; then
-    fail "The path $iris_dir already exists but is not a git checkout. Move it or choose a different location."
+    fail "The path $iris_dir already exists but is not a git checkout. Move it aside and re-run quickstart."
   else
     log "Cloning antirez/iris.c into $iris_dir"
     git clone https://github.com/antirez/iris.c.git "$iris_dir"
   fi
 
-  # Apply custom LoRA patch if not already applied.
   local lora_patch="${ROOT_DIR}/vendor/iris-lora.patch"
   if [[ -f "$lora_patch" ]]; then
     if git -C "$iris_dir" apply --check "$lora_patch" 2>/dev/null; then
@@ -149,82 +87,6 @@ prepare_iris_checkout() {
   fi
 }
 
-download_model_snapshot() {
-  local models_root="$1"
-  local token="$2"
-  local download_failed=0
-  local model_dir="${models_root}/flux-klein-9b-distilled"
-
-  mkdir -p "$models_root"
-  install_hf_cli_if_needed
-
-  log "Downloading FLUX.2 [klein] 9B into $model_dir"
-  if ! HF_TOKEN="$token" hf download "$HF_REPO_ID" --local-dir "$model_dir"; then
-    download_failed=1
-  fi
-
-  if [[ "$download_failed" -ne 0 ]]; then
-    fail "Hugging Face download failed. Confirm the token is valid and that you accepted the terms at $HF_MODEL_URL"
-  fi
-}
-
-resolve_model_dir() {
-  local model_dir="$DEFAULT_MODELS_DIR"
-  local choice=""
-  local hf_token=""
-
-  printf '\nModel setup options:\n' >&2
-  printf '  1. Download FLUX.2 [klein] 9B into this project now (requires HF token)\n' >&2
-  printf '  2. Use an existing local folder that already has the model\n' >&2
-  printf '  3. Skip model setup for now (you can download later via the Web UI)\n' >&2
-
-  while [[ -z "$choice" ]]; do
-    read -r -p "Choose 1, 2, or 3 [3]: " choice
-    choice="${choice:-3}"
-    case "$choice" in
-      1)
-        log "The official model page is:"
-        printf '  %s\n' "$HF_MODEL_URL"
-        printf 'You must sign in and click Agree on that page before the token will work.\n'
-
-        if prompt_yes_no "Open the model page in your browser now?" "y"; then
-          open "$HF_MODEL_URL"
-        fi
-
-        if ! prompt_yes_no "Have you already accepted the terms on that page?" "n"; then
-          fail "Accept the model terms first, then re-run this script."
-        fi
-
-        read -r -s -p "Paste your Hugging Face access token: " hf_token
-        printf '\n'
-        if [[ -z "$hf_token" ]]; then
-          fail "A non-empty Hugging Face token is required for the download path."
-        fi
-
-        model_dir="$(prompt_with_default "Project Models folder" "$DEFAULT_MODELS_DIR")"
-        download_model_snapshot "$model_dir" "$hf_token"
-        ;;
-      2)
-        model_dir="$(prompt_with_default "Project Models folder" "$DEFAULT_MODELS_DIR")"
-        if [[ ! -d "$model_dir" ]]; then
-          fail "Models folder not found: $model_dir"
-        fi
-        ;;
-      3)
-        model_dir="$DEFAULT_MODELS_DIR"
-        mkdir -p "$model_dir"
-        warn "Skipping model setup. The app config will still point IRIS_MODEL_DIR at $model_dir"
-        ;;
-      *)
-        printf 'Please choose 1, 2, or 3.\n' >&2
-        choice=""
-        ;;
-    esac
-  done
-
-  RESOLVED_MODEL_DIR="$model_dir"
-}
-
 dotenv_escape() {
   local value="$1"
   value="${value//\\/\\\\}"
@@ -236,12 +98,12 @@ write_env_file() {
   local iris_bin="$1"
   local model_dir="$2"
   local storage_root="${ROOT_DIR}/storage"
-  local output_dir="${storage_root}/outputs"
+  local output_dir="${ROOT_DIR}/Outputs"
   local upload_dir="${storage_root}/uploads"
   local thumb_dir="${storage_root}/thumbs"
   local db_path="${storage_root}/app.db"
 
-  mkdir -p "$output_dir" "$upload_dir" "$thumb_dir"
+  mkdir -p "$model_dir" "${ROOT_DIR}/Loras" "$output_dir" "$upload_dir" "$thumb_dir"
 
   if [[ -f "$ENV_PATH" ]]; then
     local backup_path="${ENV_PATH}.bak.$(date +%Y%m%d%H%M%S)"
@@ -269,26 +131,22 @@ main() {
   ensure_xcode_cli
   ensure_node
 
-  log "Quick start will install npm packages, prepare iris.c inside this repo, configure .env, and optionally launch the app."
+  log "Quick start will install npm packages, prepare iris.c inside this repo, configure .env with repo-local paths, and launch the app."
 
-  local iris_dir
-  iris_dir="$(prompt_with_default "Local iris.c checkout" "$DEFAULT_IRIS_DIR")"
-  prepare_iris_checkout "$iris_dir"
-
-  local model_dir
-  resolve_model_dir
-  model_dir="$RESOLVED_MODEL_DIR"
+  prepare_iris_checkout "$DEFAULT_IRIS_DIR"
 
   log "Installing npm dependencies"
   (cd "$ROOT_DIR" && npm install)
 
-  write_env_file "$iris_dir/iris" "$model_dir"
+  write_env_file "$DEFAULT_IRIS_DIR/iris" "$DEFAULT_MODELS_DIR"
 
   log "Setup complete."
   printf '\nNext environment values:\n'
-  printf '  IRIS_BIN=%s\n' "$iris_dir/iris"
-  printf '  IRIS_MODEL_DIR=%s\n' "$model_dir"
+  printf '  IRIS_BIN=%s\n' "$DEFAULT_IRIS_DIR/iris"
+  printf '  IRIS_MODEL_DIR=%s\n' "$DEFAULT_MODELS_DIR"
+  printf '  IRIS_LORA_DIR=%s\n' "${ROOT_DIR}/Loras"
 
+  log "Models are not downloaded by quickstart anymore. Open the web UI at http://localhost:3000 and use the Models page when you're ready."
   log "Starting the app... Web UI: http://localhost:3000  API: http://127.0.0.1:8787"
   cd "$ROOT_DIR"
   npm run dev

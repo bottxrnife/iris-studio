@@ -108,7 +108,7 @@ export async function jobRoutes(app: FastifyInstance) {
       });
     }
 
-    const { mode, model, width, height, steps, guidance, inputCount, quantity } = parsed.data;
+    const { mode, model, width, height, hasLora, loraScale, steps, guidance, inputCount, quantity } = parsed.data;
 
     if (mode === 'img2img' && inputCount < 1) {
       return reply.status(400).send({ error: 'img2img requires at least one input image' });
@@ -130,6 +130,8 @@ export async function jobRoutes(app: FastifyInstance) {
       pixels: resolvedSize.width * resolvedSize.height,
       aspectRatio: resolvedSize.width / resolvedSize.height,
       inputCount,
+      hasLora,
+      loraScale: hasLora ? (loraScale ?? 1) : null,
       steps: steps ?? null,
       guidance: guidance ?? null,
     };
@@ -396,6 +398,8 @@ interface TimingSample {
   pixels: number;
   aspectRatio: number;
   inputCount: number;
+  hasLora: boolean;
+  loraScale: number | null;
   steps: number | null;
   guidance: number | null;
   durationMs: number;
@@ -407,6 +411,8 @@ interface EstimationTarget {
   pixels: number;
   aspectRatio: number;
   inputCount: number;
+  hasLora: boolean;
+  loraScale: number | null;
   steps: number | null;
   guidance: number | null;
 }
@@ -461,14 +467,21 @@ function getTimingSamples(
   const modelJobRows = modelForJobs
     ? queries.listRecentCompletedTimingSamplesByModel.all(modelForJobs, HISTORY_SAMPLE_LIMIT) as Array<{
       mode: string; model: string; width: number; height: number;
+      lora_id: string | null; lora_scale: number | null;
       steps: number | null; guidance: number | null; input_paths: string | null; duration_ms: number;
     }>
     : [];
   const allJobRows = queries.listRecentCompletedTimingSamples.all(HISTORY_SAMPLE_LIMIT) as Array<{
     mode: string; model: string; width: number; height: number;
+    lora_id: string | null; lora_scale: number | null;
     steps: number | null; guidance: number | null; input_paths: string | null; duration_ms: number;
   }>;
-  const jobRows = modelJobRows.length >= MIN_MODE_SAMPLE_COUNT ? modelJobRows : allJobRows;
+  const jobRows = modelJobRows.length > 0
+    ? [
+      ...modelJobRows,
+      ...allJobRows.filter((row) => row.model !== modelForJobs),
+    ].slice(0, HISTORY_SAMPLE_LIMIT)
+    : allJobRows;
 
   const jobSamples: TimingSample[] = [];
   for (let index = 0; index < jobRows.length; index++) {
@@ -482,6 +495,8 @@ function getTimingSamples(
       pixels,
       aspectRatio: row.width / row.height,
       inputCount: getInputCount(row.input_paths),
+      hasLora: row.lora_id != null,
+      loraScale: row.lora_scale,
       steps: row.steps,
       guidance: row.guidance,
       durationMs: row.duration_ms,
@@ -508,6 +523,8 @@ function getTimingSamples(
       pixels,
       aspectRatio: row.width / row.height,
       inputCount: row.input_count,
+      hasLora: false,
+      loraScale: null,
       steps: null,
       guidance: null,
       durationMs: row.duration_ms,
@@ -535,7 +552,7 @@ function removeOutliers(samples: TimingSample[], targetModel: string | null): Ti
 
   const groups = new Map<string, TimingSample[]>();
   for (const sample of samples) {
-    const key = `${sample.mode}:${sample.model ?? 'any'}`;
+    const key = `${sample.mode}:${sample.model ?? 'any'}:${sample.hasLora ? 'lora' : 'base'}`;
     let group = groups.get(key);
     if (!group) {
       group = [];
@@ -600,6 +617,8 @@ function getProjectedActiveSample(activeJob: JobRow | null, snapshot: QueueSnaps
     pixels,
     aspectRatio: activeJob.width / activeJob.height,
     inputCount: getInputCount(activeJob.input_paths),
+    hasLora: activeJob.lora_id != null,
+    loraScale: activeJob.lora_scale,
     steps: activeJob.steps,
     guidance: activeJob.guidance,
     durationMs: projectedTotalMs,
@@ -653,12 +672,14 @@ function getInputCount(inputPaths: string | null) {
   }
 }
 
-function getTargetFromRow(row: Pick<JobRow, 'mode' | 'width' | 'height' | 'steps' | 'guidance' | 'input_paths'>): EstimationTarget {
+function getTargetFromRow(row: Pick<JobRow, 'mode' | 'width' | 'height' | 'lora_id' | 'lora_scale' | 'steps' | 'guidance' | 'input_paths'>): EstimationTarget {
   return {
     mode: row.mode,
     pixels: row.width * row.height,
     aspectRatio: row.width / row.height,
     inputCount: getInputCount(row.input_paths),
+    hasLora: row.lora_id != null,
+    loraScale: row.lora_scale,
     steps: row.steps,
     guidance: row.guidance,
   };
@@ -707,7 +728,20 @@ function getRecencyWeight(sample: TimingSample) {
 
 function getModelFactor(targetModel: string | null, sample: TimingSample): number {
   if (!targetModel || !sample.model) return 1;
-  return sample.model === targetModel ? 2.5 : 0.15;
+  return sample.model === targetModel ? 3.5 : 0.08;
+}
+
+function getLoraFactor(target: EstimationTarget, sample: TimingSample) {
+  if (!target.hasLora && !sample.hasLora) {
+    return 1.1;
+  }
+
+  if (target.hasLora !== sample.hasLora) {
+    return 0.32;
+  }
+
+  const scaleDelta = getNormalizedDifference(target.loraScale, sample.loraScale, 0.5);
+  return 1.15 / (1 + scaleDelta * 0.5);
 }
 
 function getNeighborWeight(target: EstimationTarget, sample: TimingSample, targetModel: string | null = null) {
@@ -715,6 +749,7 @@ function getNeighborWeight(target: EstimationTarget, sample: TimingSample, targe
   const aspectDelta = Math.abs(Math.log(target.aspectRatio / sample.aspectRatio));
   const stepDelta = getNormalizedDifference(target.steps, sample.steps, 8);
   const guidanceDelta = getNormalizedDifference(target.guidance, sample.guidance, 4);
+  const loraDelta = getNormalizedDifference(target.loraScale, sample.loraScale, 0.35);
   const inputDelta = Math.abs(target.inputCount - sample.inputCount);
   const distance =
     1 +
@@ -722,21 +757,24 @@ function getNeighborWeight(target: EstimationTarget, sample: TimingSample, targe
     aspectDelta * 0.9 +
     stepDelta * 0.45 +
     guidanceDelta * 0.2 +
+    loraDelta * 0.35 +
     inputDelta * 0.4;
-  const modeFactor = sample.mode === target.mode ? 1.7 : 0.45;
+  const modeFactor = sample.mode === target.mode ? 1.9 : 0.2;
   const modelFactor = getModelFactor(targetModel, sample);
+  const loraFactor = getLoraFactor(target, sample);
 
-  return (modeFactor * modelFactor * getRecencyWeight(sample)) / (distance * distance);
+  return (modeFactor * modelFactor * loraFactor * getRecencyWeight(sample)) / (distance * distance);
 }
 
 function getRegressionWeight(target: EstimationTarget, sample: TimingSample, targetModel: string | null = null) {
   const areaDelta = Math.abs(Math.log(target.pixels / sample.pixels));
   const aspectDelta = Math.abs(Math.log(target.aspectRatio / sample.aspectRatio));
   const inputDelta = Math.abs(target.inputCount - sample.inputCount);
-  const modeFactor = sample.mode === target.mode ? 1.5 : 0.65;
+  const modeFactor = sample.mode === target.mode ? 1.7 : 0.3;
   const modelFactor = getModelFactor(targetModel, sample);
+  const loraFactor = getLoraFactor(target, sample);
 
-  return (modeFactor * modelFactor * getRecencyWeight(sample)) / (1 + areaDelta * 1.1 + aspectDelta * 0.4 + inputDelta * 0.25);
+  return (modeFactor * modelFactor * loraFactor * getRecencyWeight(sample)) / (1 + areaDelta * 1.1 + aspectDelta * 0.4 + inputDelta * 0.25);
 }
 
 function getCandidateSamples(target: EstimationTarget, context: FormatJobContext) {
@@ -792,6 +830,42 @@ function getSparseModeAdjustment(target: EstimationTarget, context: FormatJobCon
   }
 
   return clamp(sameModeMsPerPixel / txt2imgMsPerPixel, defaultAdjustment, defaultAdjustment + 0.9);
+}
+
+function getDefaultLoraAdjustment(target: EstimationTarget) {
+  if (!target.hasLora) {
+    return 1;
+  }
+
+  const scale = target.loraScale ?? 1;
+  return 1.08 + Math.max(0, scale - 1) * 0.06;
+}
+
+function hasSufficientSameModeLoraCoverage(target: EstimationTarget, context: FormatJobContext) {
+  const matchingSamples = context.timingSamples.filter((sample) => (
+    sample.mode === target.mode
+    && sample.hasLora === target.hasLora
+  ));
+
+  return matchingSamples.length >= 2;
+}
+
+function getSparseLoraAdjustment(target: EstimationTarget, context: FormatJobContext) {
+  if (!target.hasLora || hasSufficientSameModeLoraCoverage(target, context)) {
+    return 1;
+  }
+
+  const sameModeLoraSamples = context.timingSamples.filter((sample) => sample.mode === target.mode && sample.hasLora);
+  const sameModeNonLoraSamples = context.timingSamples.filter((sample) => sample.mode === target.mode && !sample.hasLora);
+  const defaultAdjustment = getDefaultLoraAdjustment(target);
+  const loraMsPerPixel = getModeBaselineMsPerPixel(sameModeLoraSamples);
+  const nonLoraMsPerPixel = getModeBaselineMsPerPixel(sameModeNonLoraSamples);
+
+  if (loraMsPerPixel == null || nonLoraMsPerPixel == null || nonLoraMsPerPixel <= 0) {
+    return defaultAdjustment;
+  }
+
+  return clamp(loraMsPerPixel / nonLoraMsPerPixel, defaultAdjustment, defaultAdjustment + 0.2);
 }
 
 function getLocalNeighborEstimateMs(target: EstimationTarget, samples: TimingSample[], targetModel: string | null) {
@@ -883,11 +957,14 @@ function getFallbackEstimateMs(target: EstimationTarget, samples: TimingSample[]
 }
 
 function estimateJobTotalDurationMs(
-  row: Pick<JobRow, 'mode' | 'width' | 'height' | 'steps' | 'guidance' | 'input_paths'>,
+  row: Pick<JobRow, 'mode' | 'width' | 'height' | 'model' | 'lora_id' | 'lora_scale' | 'steps' | 'guidance' | 'input_paths'>,
   context: FormatJobContext
 ) {
   const target = getTargetFromRow(row);
-  return estimateTargetDurationMs(target, context);
+  return estimateTargetDurationMs(target, {
+    ...context,
+    targetModel: row.model,
+  });
 }
 
 function estimateTargetDurationMs(target: EstimationTarget, context: FormatJobContext) {
@@ -910,7 +987,11 @@ function estimateTargetDurationMs(target: EstimationTarget, context: FormatJobCo
     return null;
   }
 
-  const adjustedEstimateMs = Math.round(blendedEstimateMs * getSparseModeAdjustment(target, context));
+  const adjustedEstimateMs = Math.round(
+    blendedEstimateMs
+    * getSparseModeAdjustment(target, context)
+    * getSparseLoraAdjustment(target, context)
+  );
   return Math.max(1000, adjustedEstimateMs);
 }
 

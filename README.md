@@ -15,38 +15,38 @@ Run the bootstrap script for a one-command local setup:
 The script will:
 
 - clone or reuse a local `antirez/iris.c` checkout in `vendor/iris.c`
+- apply `vendor/iris-lora.patch` if needed
 - build `iris.c` with `make mps`
-- ask whether to download FLUX.2 [klein] 9B into the project `Models/` folder or skip model setup
-- prompt for a Hugging Face access token only if you choose the download path
-- point you to the official Hugging Face model page and remind you to accept the terms before the token will work: `https://huggingface.co/black-forest-labs/FLUX.2-klein-9B`
-- write `.env` with local paths and optionally start the app
+- create the local `Models/`, `Loras/`, and `storage/` folders inside this repo
+- write `.env` with repo-local paths
+- install npm dependencies
+- start the app
 
-The app can start before any models are downloaded. Use the web `Models` page later to fetch 4B or 9B weights from inside the UI, or place a full supported model folder in `Models/`.
+The app can start before any models are downloaded. `quickstart.sh` no longer asks about FLUX downloads. Use the web `Models` page later to fetch 4B, 9B, or Z-Image weights from inside the UI, or place a full supported model folder in `Models/`.
 
 You can also place `.safetensors` LoRAs in `Loras/`. The app will inspect their safetensors metadata, classify likely `fal.ai` vs `ComfyUI / Kohya` format, and match them to compatible FLUX Klein model variants when possible.
 
 ## Interface Preview
 
-These previews show the current app layout with placeholder artwork. No real generated images are used in these demos.
+These previews are captured from a live local run of the app.
 
-### Text-to-Image Workspace
+### Studio Workspace
 
-The three-panel layout: settings rail on the left, canvas in the center, and history + metadata on the right.
+The main Studio layout keeps settings on the left, the active canvas in the center, and history on the right.
 
-![Iris Studio text-to-image workspace](docs/readme-assets/overview-text-mode.svg)
+![Iris Studio workspace](docs/readme-assets/studio-shot.png)
 
-### Live Generation Progress
+### Models Page
 
-While generating, Iris Studio shows step-by-step progress through every phase — loading VAE, loading text encoders, encoding the prompt, loading the transformer, and denoising with block-level detail.
+The Models page handles downloads, install state, hardware guidance, and benchmarking.
 
-![Iris Studio live progress display](docs/readme-assets/overview-progress.svg)
+![Iris Studio models page](docs/readme-assets/models-shot.png)
 
-### Image-to-Image and Multi-Reference Modes
+### LoRA Library
 
-<p align="center">
-  <img src="docs/readme-assets/overview-image-mode.svg" alt="Iris Studio image-to-image workspace" width="49%" />
-  <img src="docs/readme-assets/overview-multi-mode.svg" alt="Iris Studio multi-reference workspace" width="49%" />
-</p>
+The LoRAs page is where local adapters are uploaded, inspected, and matched to compatible models.
+
+![Iris Studio LoRAs page](docs/readme-assets/loras-shot.png)
 
 ## What It Does
 
@@ -114,11 +114,12 @@ npm -v
 
 ## 2. Clone and Build `iris.c`
 
-Clone `iris.c` into the repo `vendor/` folder, then build it with Metal support:
+Clone `iris.c` into the repo `vendor/` folder, apply the local LoRA patch, then build it with Metal support:
 
 ```bash
 git clone https://github.com/antirez/iris.c.git vendor/iris.c
 cd vendor/iris.c
+git apply ../iris-lora.patch
 make mps
 ```
 
@@ -191,7 +192,7 @@ Then edit `.env` for your machine:
 IRIS_BIN=/Users/yourname/iris-studio/vendor/iris.c/iris
 IRIS_MODEL_DIR=/Users/yourname/iris-studio/Models
 IRIS_LORA_DIR=/Users/yourname/iris-studio/Loras
-IRIS_OUTPUT_DIR=/Users/yourname/iris-studio/storage/outputs
+IRIS_OUTPUT_DIR=/Users/yourname/iris-studio/Outputs
 IRIS_UPLOAD_DIR=/Users/yourname/iris-studio/storage/uploads
 IRIS_THUMB_DIR=/Users/yourname/iris-studio/storage/thumbs
 IRIS_DB_PATH=/Users/yourname/iris-studio/storage/app.db
@@ -203,6 +204,7 @@ Notes:
 - `IRIS_MODEL_DIR` should point at the project `Models/` root
 - `IRIS_LORA_DIR` should point at the project `Loras/` root
 - Storage directories are local-only and should not be committed
+- `./quickstart.sh` writes this file for you automatically using repo-local paths
 
 ## 7. Start the App
 
@@ -314,7 +316,8 @@ npm run build
 ├── services/api/       # Fastify API and iris worker
 ├── Models/             # Local model assets and manual drop-ins
 ├── Loras/              # Local LoRA assets and manual drop-ins
-├── storage/            # Local runtime data only
+├── Outputs/            # Generated images
+├── storage/            # Uploads, thumbs, and local DB
 ├── vendor/iris.c/      # Local iris.c checkout
 ├── .env.example
 ├── package.json
@@ -356,7 +359,7 @@ Common causes:
 
 Check the storage paths in `.env` and confirm the app can write to:
 
-- `storage/outputs`
+- `Outputs`
 - `storage/uploads`
 - `storage/thumbs`
 

@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { CircleHelp, Layers3, ScanSearch, Sparkles } from 'lucide-react';
+import { CircleHelp, Layers3, ScanSearch, Settings, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const LINKS = [
   { href: '/', label: 'Studio', icon: Sparkles },
   { href: '/models', label: 'Models', icon: Layers3 },
   { href: '/loras', label: 'Loras', icon: ScanSearch },
+  { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/help', label: 'Help', icon: CircleHelp },
 ];
 
@@ -20,7 +21,7 @@ export function AppHeader() {
       <div className="mx-auto flex h-14 max-w-[1800px] items-center justify-between px-4">
         <div>
           <p className="text-sm font-semibold text-foreground">Iris Studio</p>
-          <p className="text-[11px] text-muted-foreground">AI image generation on your M-series Mac</p>
+          <p className="text-[11px] text-muted-foreground">Local AI image generation for M-series Mac</p>
         </div>
         <nav className="flex items-center gap-2">
           {LINKS.map((link) => {

@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { SettingsRail } from '@/components/settings-rail';
 import { Canvas } from '@/components/canvas';
 import { HistoryPanel } from '@/components/history-panel';
+import { useAppSettings } from '@/components/settings-provider';
 import { subscribeToJob } from '@/lib/api';
 import type { EditorDraft, Job, JobProgress, JobStatus } from '@/lib/types';
 
@@ -22,20 +23,23 @@ function clamp(value: number, min: number, max: number) {
 
 export default function Home() {
   const queryClient = useQueryClient();
+  const { settings, setSetting } = useAppSettings();
   const containerRef = useRef<HTMLElement>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState<JobStatus | null>(null);
   const [liveProgress, setLiveProgress] = useState<JobProgress | null>(null);
   const [editorDraft, setEditorDraft] = useState<EditorDraft | null>(null);
-  const [leftPaneWidth, setLeftPaneWidth] = useState(320);
-  const [rightPaneWidth, setRightPaneWidth] = useState(320);
+  const [leftPaneWidth, setLeftPaneWidth] = useState(settings.leftPaneWidth);
+  const [rightPaneWidth, setRightPaneWidth] = useState(settings.rightPaneWidth);
   const [draggingSide, setDraggingSide] = useState<DragSide | null>(null);
   const leftPaneWidthRef = useRef(leftPaneWidth);
   const rightPaneWidthRef = useRef(rightPaneWidth);
 
   const handleJobCreated = useCallback((jobId: string) => {
-    setActiveJobId(jobId);
-  }, []);
+    if (settings.autoSelectNewJobs) {
+      setActiveJobId(jobId);
+    }
+  }, [settings.autoSelectNewJobs]);
 
   const handleSelectJob = useCallback((jobId: string | null) => {
     setActiveJobId(jobId);
@@ -62,8 +66,32 @@ export default function Home() {
   }, [leftPaneWidth]);
 
   useEffect(() => {
+    if (settings.leftPaneWidth !== leftPaneWidth) {
+      setLeftPaneWidth(settings.leftPaneWidth);
+    }
+  }, [leftPaneWidth, settings.leftPaneWidth]);
+
+  useEffect(() => {
     rightPaneWidthRef.current = rightPaneWidth;
   }, [rightPaneWidth]);
+
+  useEffect(() => {
+    if (settings.rightPaneWidth !== rightPaneWidth) {
+      setRightPaneWidth(settings.rightPaneWidth);
+    }
+  }, [rightPaneWidth, settings.rightPaneWidth]);
+
+  useEffect(() => {
+    if (settings.leftPaneWidth !== leftPaneWidth) {
+      setSetting('leftPaneWidth', leftPaneWidth);
+    }
+  }, [leftPaneWidth, setSetting, settings.leftPaneWidth]);
+
+  useEffect(() => {
+    if (settings.rightPaneWidth !== rightPaneWidth) {
+      setSetting('rightPaneWidth', rightPaneWidth);
+    }
+  }, [rightPaneWidth, setSetting, settings.rightPaneWidth]);
 
   useEffect(() => {
     if (!activeJobId) {

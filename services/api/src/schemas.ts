@@ -39,6 +39,8 @@ export const estimateJobSchema = z.object({
   model: z.enum(['flux-klein-4b', 'flux-klein-base-4b', 'flux-klein-9b', 'flux-klein-base-9b', 'zimage-turbo-6b']).optional(),
   width: multipleOf16('width').default(512),
   height: multipleOf16('height').default(512),
+  hasLora: z.boolean().default(false),
+  loraScale: z.number().min(0).max(2).optional(),
   steps: z.number().int().min(1).max(100).optional(),
   guidance: z.number().min(0).max(30).optional(),
   inputCount: z.number().int().min(0).max(16).default(0),

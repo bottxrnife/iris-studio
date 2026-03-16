@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Clock, Download, Copy, RefreshCw, RotateCcw, Square, Trash2 } from 'lucide-react';
+import { useAppSettings } from '@/components/settings-provider';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { listJobs, getJob, createJob, cancelJob, deleteJob, downloadJobsZip, getThumbUrl, getOutputImageUrl } from '@/lib/api';
@@ -17,8 +18,6 @@ interface HistoryPanelProps {
   onLoadJobToEditor: (job: Job) => void;
   onSelectJob: (jobId: string | null) => void;
 }
-
-const HISTORY_PAGE_SIZE = 20;
 
 function isTerminalJobStatus(status: JobStatus) {
   return status === 'done' || status === 'failed' || status === 'cancelled';
@@ -38,14 +37,28 @@ function triggerDirectDownload(url: string, filename: string) {
   link.remove();
 }
 
+function shouldConfirmDelete(job: Job, settings: ReturnType<typeof useAppSettings>['settings']) {
+  if (job.status === 'done') {
+    return settings.confirmDeleteFinishedImages;
+  }
+
+  if (job.status === 'cancelled') {
+    return settings.confirmDeleteCancelledJobs;
+  }
+
+  return false;
+}
+
 export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEditor, onSelectJob }: HistoryPanelProps) {
+  const { settings } = useAppSettings();
   const queryClient = useQueryClient();
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [page, setPage] = useState(0);
+  const historyPageSize = settings.historyPageSize;
 
   const { data, dataUpdatedAt, isLoading, isError, error } = useQuery({
-    queryKey: ['jobs', page],
-    queryFn: () => listJobs(HISTORY_PAGE_SIZE, page * HISTORY_PAGE_SIZE),
+    queryKey: ['jobs', page, historyPageSize],
+    queryFn: () => listJobs(historyPageSize, page * historyPageSize),
     refetchInterval: activeJobId ? 1000 : 5000,
     placeholderData: (previousData) => previousData,
   });
@@ -59,7 +72,7 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
   const jobs = data?.jobs ?? [];
   const totalJobs = data?.total ?? 0;
   const totalPages = data
-    ? Math.max(1, Math.ceil(totalJobs / HISTORY_PAGE_SIZE))
+    ? Math.max(1, Math.ceil(totalJobs / historyPageSize))
     : page + 1;
   const deletableJobs = useMemo(() => jobs.filter((job) => isTerminalJobStatus(job.status)), [jobs]);
   const deletableJobIds = useMemo(() => deletableJobs.map((job) => job.id), [deletableJobs]);
@@ -82,6 +95,10 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
       setPage(totalPages - 1);
     }
   }, [data, page, totalPages]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [historyPageSize]);
 
   const rerunMutation = useMutation({
     mutationFn: ({ job, forceSize }: { job: Job; forceSize?: number }) =>
@@ -239,8 +256,12 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
   function handleDeleteSelected() {
     if (!selectedJob || !canDeleteSelected) return;
 
-    if (selectedStatus === 'done') {
-      const confirmed = window.confirm('Delete this generated image and remove it from history?');
+    if (shouldConfirmDelete(selectedJob, settings)) {
+      const confirmed = window.confirm(
+        selectedStatus === 'done'
+          ? 'Delete this generated image and remove it from history?'
+          : 'Delete this cancelled job from history?'
+      );
       if (!confirmed) return;
     }
 
@@ -250,12 +271,14 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
   function handleStopSelected() {
     if (!selectedJob || !canStopSelected) return;
 
-    const confirmed = window.confirm(
-      selectedStatus === 'queued'
-        ? 'Stop this queued job and mark it as cancelled?'
-        : 'Stop this active generation?'
-    );
-    if (!confirmed) return;
+    if (settings.confirmStopJobs) {
+      const confirmed = window.confirm(
+        selectedStatus === 'queued'
+          ? 'Stop this queued job and mark it as cancelled?'
+          : 'Stop this active generation?'
+      );
+      if (!confirmed) return;
+    }
 
     stopMutation.mutate(selectedJob.id);
   }
@@ -279,12 +302,17 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
   function handleBulkDelete() {
     if (selectedJobIds.length === 0) return;
 
-    const confirmed = window.confirm(
-      selectedJobIds.length === 1
-        ? 'Delete the selected job from history?'
-        : `Delete ${selectedJobIds.length} selected jobs from history?`
-    );
-    if (!confirmed) return;
+    const selectedJobs = jobs.filter((job) => selectedJobIds.includes(job.id));
+    const requiresConfirmation = selectedJobs.some((job) => shouldConfirmDelete(job, settings));
+
+    if (requiresConfirmation) {
+      const confirmed = window.confirm(
+        selectedJobIds.length === 1
+          ? 'Delete the selected job from history?'
+          : `Delete ${selectedJobIds.length} selected jobs from history?`
+      );
+      if (!confirmed) return;
+    }
 
     bulkDeleteMutation.mutate(selectedJobIds);
   }
@@ -374,7 +402,12 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
         return;
       }
 
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+      if (
+        event.key !== 'ArrowLeft'
+        && event.key !== 'ArrowRight'
+        && event.key !== 'ArrowUp'
+        && event.key !== 'ArrowDown'
+      ) {
         return;
       }
 
@@ -385,7 +418,7 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
 
       event.preventDefault();
 
-      const direction = event.key === 'ArrowLeft' ? -1 : 1;
+      const direction = (event.key === 'ArrowLeft' || event.key === 'ArrowUp') ? -1 : 1;
       const nextIndex = currentIndex + direction;
       if (nextIndex >= 0 && nextIndex < jobs.length) {
         onSelectJob(jobs[nextIndex]!.id);
@@ -399,8 +432,8 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
 
       try {
         const nextPageData = await queryClient.fetchQuery({
-          queryKey: ['jobs', nextPage],
-          queryFn: () => listJobs(HISTORY_PAGE_SIZE, nextPage * HISTORY_PAGE_SIZE),
+          queryKey: ['jobs', nextPage, historyPageSize],
+          queryFn: () => listJobs(historyPageSize, nextPage * historyPageSize),
         });
 
         if (nextPageData.jobs.length === 0) {
@@ -421,7 +454,7 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
     return () => {
       window.removeEventListener('keydown', handleArrowNavigation);
     };
-  }, [activeJobId, jobs, onSelectJob, page, queryClient, totalPages]);
+  }, [activeJobId, historyPageSize, jobs, onSelectJob, page, queryClient, totalPages]);
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden border-l border-border bg-card">
@@ -441,7 +474,7 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
               <span className="text-muted-foreground">Size</span>
               <span>{selectedJob.width} × {selectedJob.height}</span>
             </div>
-            {selectedJob.seed != null && (
+            {settings.showSeed && selectedJob.seed != null && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Seed</span>
                 <span className="font-mono">{selectedJob.seed}</span>
@@ -460,25 +493,25 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
                 </span>
               </div>
             )}
-            {selectedElapsed && (
+            {settings.showElapsed && selectedElapsed && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Elapsed</span>
                 <span>{selectedElapsed}</span>
               </div>
             )}
-            {selectedJob.durationMs != null && !selectedElapsed && (
+            {selectedJob.durationMs != null && !(settings.showElapsed && selectedElapsed) && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Duration</span>
                 <span>{(selectedJob.durationMs / 1000).toFixed(1)}s</span>
               </div>
             )}
-            {selectedJob.queuePosition != null && (
+            {settings.showQueuePosition && selectedJob.queuePosition != null && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Queue</span>
                 <span>#{selectedJob.queuePosition}</span>
               </div>
             )}
-            {selectedEta && (
+            {settings.showEta && selectedEta && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">ETA</span>
                 <span>{selectedEta}</span>
@@ -520,12 +553,12 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
                     : ''}
                 </p>
               ) : null}
-              {selectedEta && (
+              {settings.showEta && selectedEta && (
                 <p className="text-[11px] text-muted-foreground">
                   ETA {selectedEta}
                 </p>
               )}
-              {selectedElapsed && (
+              {settings.showElapsed && selectedElapsed && (
                 <p className="text-[11px] text-muted-foreground">
                   Elapsed {selectedElapsed}
                 </p>
@@ -711,7 +744,9 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
             return (
               <div
                 key={job.id}
-                className={`w-full text-left rounded-lg p-2 transition-colors ${
+                className={`w-full text-left rounded-lg transition-colors ${
+                  settings.compactHistoryCards ? 'p-1.5' : 'p-2'
+                } ${
                   job.id === activeJobId
                     ? 'bg-accent'
                     : 'hover:bg-accent/50'
@@ -741,10 +776,10 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
                       <img
                         src={getThumbUrl(job.thumbPath)}
                         alt=""
-                        className="w-12 h-12 rounded object-cover shrink-0"
+                        className={`${settings.compactHistoryCards ? 'h-10 w-10' : 'h-12 w-12'} rounded object-cover shrink-0`}
                       />
                     ) : (
-                      <div className="w-12 h-12 rounded bg-secondary shrink-0 flex items-center justify-center">
+                      <div className={`${settings.compactHistoryCards ? 'h-10 w-10' : 'h-12 w-12'} rounded bg-secondary shrink-0 flex items-center justify-center`}>
                         <span className="text-xs text-muted-foreground">
                           {job.status === 'failed' ? '!' : job.status === 'cancelled' ? '■' : job.status === 'done' ? '?' : '...'}
                         </span>
@@ -756,18 +791,18 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
                       <p className="truncate text-xs" title={job.prompt}>
                         {job.prompt}
                       </p>
-                      <div className="flex items-center gap-2 mt-1">
-                        {job.queuePosition != null && (
+                      <div className={`mt-1 flex items-center gap-2 ${settings.compactHistoryCards ? 'flex-wrap' : ''}`}>
+                        {settings.showQueuePosition && job.queuePosition != null && (
                           <span className="text-[10px] text-foreground/80">
                             Queue #{job.queuePosition}
                           </span>
                         )}
-                        {rowEta && (
+                        {settings.showEta && rowEta && (
                           <span className="text-[10px] text-muted-foreground">
                             ETA {rowEta}
                           </span>
                         )}
-                        {rowElapsed && (
+                        {settings.showElapsed && rowElapsed && (
                           <span className="text-[10px] text-muted-foreground">
                             Elapsed {rowElapsed}
                           </span>
@@ -775,12 +810,12 @@ export function HistoryPanel({ activeJobId, liveStatus, progress, onLoadJobToEdi
                         <span className="text-[10px] text-muted-foreground">
                           {job.width}×{job.height}
                         </span>
-                        {job.seed != null && (
+                        {settings.showSeed && job.seed != null && (
                           <span className="text-[10px] text-muted-foreground font-mono">
                             #{job.seed}
                           </span>
                         )}
-                        {job.durationMs != null && !rowElapsed && (
+                        {job.durationMs != null && !(settings.showElapsed && rowElapsed) && (
                           <span className="text-[10px] text-muted-foreground">
                             {(job.durationMs / 1000).toFixed(1)}s
                           </span>

@@ -158,6 +158,14 @@ async function runJob(jobId: string) {
 
   queries.updateJobStatus.run('running', jobId);
   emit(jobId, 'running');
+  emit(jobId, 'progress', {
+    step: 0,
+    totalSteps: 0,
+    percent: 0,
+    phase: 'Initializing',
+    substep: 0,
+    totalSubsteps: 0,
+  });
 
   const outputFilename = `${jobId}.png`;
   const outputPath = path.join(config.outputDir, outputFilename);

@@ -140,6 +140,8 @@ interface JobStatements {
     model: string;
     width: number;
     height: number;
+    lora_id: string | null;
+    lora_scale: number | null;
     steps: number | null;
     guidance: number | null;
     input_paths: string | null;
@@ -150,6 +152,8 @@ interface JobStatements {
     model: string;
     width: number;
     height: number;
+    lora_id: string | null;
+    lora_scale: number | null;
     steps: number | null;
     guidance: number | null;
     input_paths: string | null;
@@ -194,7 +198,18 @@ export const queries: JobStatements = {
   ),
 
   listJobs: db.prepare<[number, number], JobRow>(
-    `SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    `SELECT *
+     FROM jobs
+     ORDER BY
+       CASE
+         WHEN status IN ('running', 'saving') THEN 0
+         WHEN status = 'queued' THEN 1
+         ELSE 2
+       END ASC,
+       CASE WHEN status IN ('running', 'saving') THEN updated_at END DESC,
+       CASE WHEN status = 'queued' THEN created_at END ASC,
+       CASE WHEN status NOT IN ('running', 'saving', 'queued') THEN created_at END DESC
+     LIMIT ? OFFSET ?`
   ),
 
   listRecoverableJobs: db.prepare<[], JobRow>(
@@ -208,12 +223,14 @@ export const queries: JobStatements = {
     model: string;
     width: number;
     height: number;
+    lora_id: string | null;
+    lora_scale: number | null;
     steps: number | null;
     guidance: number | null;
     input_paths: string | null;
     duration_ms: number;
   }>(
-    `SELECT mode, model, width, height, steps, guidance, input_paths, duration_ms
+    `SELECT mode, model, width, height, lora_id, lora_scale, steps, guidance, input_paths, duration_ms
      FROM jobs
      WHERE status = 'done'
        AND duration_ms IS NOT NULL
@@ -228,12 +245,14 @@ export const queries: JobStatements = {
     model: string;
     width: number;
     height: number;
+    lora_id: string | null;
+    lora_scale: number | null;
     steps: number | null;
     guidance: number | null;
     input_paths: string | null;
     duration_ms: number;
   }>(
-    `SELECT mode, model, width, height, steps, guidance, input_paths, duration_ms
+    `SELECT mode, model, width, height, lora_id, lora_scale, steps, guidance, input_paths, duration_ms
      FROM jobs
      WHERE status = 'done'
        AND duration_ms IS NOT NULL

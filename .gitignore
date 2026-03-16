@@ -8,6 +8,7 @@ storage/uploads/
 storage/outputs/
 storage/thumbs/
 storage/app.db
+Outputs/
 vendor/iris.c/
 !vendor/iris-lora.patch
 Models/*

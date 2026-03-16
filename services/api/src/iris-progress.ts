@@ -24,6 +24,53 @@ const PHASE_WEIGHT_BEFORE_DENOISING = 0.15;
 const PHASE_WEIGHT_DENOISING = 0.75;
 const PHASE_WEIGHT_AFTER_DENOISING = 0.10;
 
+function normalizePhaseName(phase: string) {
+  const trimmed = phase.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower.includes('vae')) {
+    return 'Loading VAE';
+  }
+
+  if (
+    lower.includes('qwen')
+    || lower.includes('tokenizer')
+    || ((lower.includes('loading') || lower.includes('load')) && lower.includes('encoder'))
+  ) {
+    return 'Loading text encoders';
+  }
+
+  if (lower.includes('reference') && lower.includes('encod')) {
+    return 'Encoding reference image';
+  }
+
+  if (lower.includes('encod') && lower.includes('text')) {
+    return 'Encoding prompt';
+  }
+
+  if (lower.includes('transformer')) {
+    return 'Loading transformer';
+  }
+
+  if (lower.includes('denois')) {
+    return 'Denoising';
+  }
+
+  if (lower.includes('decod')) {
+    return 'Decoding image';
+  }
+
+  if (lower.startsWith('saving')) {
+    return 'Saving';
+  }
+
+  if (lower.includes('init')) {
+    return 'Initializing';
+  }
+
+  return trimmed;
+}
+
 export function createInitialProgressState(): ProgressState {
   return {
     totalSteps: 0,
@@ -108,9 +155,33 @@ export function parseProgressLine(
 
   const now = Date.now();
 
-  const phaseStartMatch = line.match(/^([A-Za-z0-9\. \[\]\-]+)\.\.\.$/);
+  const phaseDoneMatch = line.match(/^([A-Za-z0-9\. \[\]\-]+?)\.\.\.?\s+done\s+\((\d+(?:\.\d+)?)s\)/i);
+  if (phaseDoneMatch) {
+    const phase = normalizePhaseName(phaseDoneMatch[1].trim());
+    const pct = getPreDenoisingPercent(phase);
+    onProgress({
+      step: state.currentStep,
+      totalSteps: state.totalSteps,
+      percent: pct,
+      phase,
+      substep: 0,
+      totalSubsteps: 0,
+    });
+
+    const elapsedSec = parseFloat(phaseDoneMatch[2]);
+    const nextState = {
+      ...state,
+      currentPhase: phase,
+      lastPhaseStartedAt: null,
+    };
+    nextState.phaseTimingsMs = new Map(state.phaseTimingsMs);
+    nextState.phaseTimingsMs.set(phase.toLowerCase(), Math.round(elapsedSec * 1000));
+    return nextState;
+  }
+
+  const phaseStartMatch = line.match(/^([A-Za-z0-9\. \[\]\-]+?)\.\.\.(.*)$/);
   if (phaseStartMatch) {
-    const phase = phaseStartMatch[1].trim();
+    const phase = normalizePhaseName(phaseStartMatch[1].trim());
     const nextState = {
       ...state,
       currentPhase: phase,
@@ -126,17 +197,6 @@ export function parseProgressLine(
       substep: 0,
       totalSubsteps: 0,
     });
-    return nextState;
-  }
-
-  const phaseDoneMatch = line.match(/^([A-Za-z0-9\. \[\]\-]+)\.\.\.?\s+done\s+\((\d+(?:\.\d+)?)s\)/);
-  if (phaseDoneMatch) {
-    const phase = phaseDoneMatch[1].trim();
-    const elapsedSec = parseFloat(phaseDoneMatch[2]);
-    const nextState = { ...state };
-    nextState.phaseTimingsMs = new Map(state.phaseTimingsMs);
-    nextState.phaseTimingsMs.set(phase.toLowerCase(), Math.round(elapsedSec * 1000));
-    nextState.lastPhaseStartedAt = null;
     return nextState;
   }
 
